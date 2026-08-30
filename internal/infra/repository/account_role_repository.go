@@ -61,6 +61,7 @@ func (r *accountRoleRepoImpl) Add(ctx context.Context, accountID, roleID, grante
 	row := model.AccountRole{
 		AccountID: accountID,
 		RoleID:    roleID,
+		GrantedAt: time.Now(),
 		ExpiresAt: expiresAt,
 	}
 	if grantedBy != "" {

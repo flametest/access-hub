@@ -36,6 +36,7 @@ func (r *accountGrantRepoImpl) Add(ctx context.Context, accountID, resourceID, g
 	row := model.AccountGrant{
 		AccountID:  accountID,
 		ResourceID: resourceID,
+		GrantedAt:  time.Now(),
 		ExpiresAt:  expiresAt,
 		Effect:     grantEffectAllow,
 	}
