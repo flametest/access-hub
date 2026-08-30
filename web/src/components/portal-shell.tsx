@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { AppHeader } from "@/components/app-header";
 import { Icon } from "@/components/icon";
 import { Spinner } from "@/components/spinner";
@@ -34,10 +33,10 @@ export function PortalShell({
   children: ReactNode;
   width?: keyof typeof WIDTHS;
 }) {
-  const { ready, authed } = useRequireAuth();
+  const { authed } = useRequireAuth();
   const { data: me } = useMe(authed);
 
-  if (!ready || !authed) return <FullPageLoader />;
+  if (!authed) return <FullPageLoader />;
 
   return (
     <div className="min-h-dvh">

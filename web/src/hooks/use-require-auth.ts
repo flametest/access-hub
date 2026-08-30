@@ -1,23 +1,31 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { getAccessToken } from "@/lib/tokens";
+import { useEffect, useSyncExternalStore } from "react";
+import { getAccessToken, subscribeToTokenChanges } from "@/lib/tokens";
+
+const getServerSnapshot = () => null;
+
+/** True once the client snapshot of localStorage carries an access token. */
+export function useHasToken(): boolean {
+  return Boolean(
+    useSyncExternalStore(subscribeToTokenChanges, getAccessToken, getServerSnapshot),
+  );
+}
 
 /**
- * Client-side gate for portal pages: once mounted, redirects to /login when
- * there is no portal access token. `ready` lets pages render skeletons while
- * localStorage is being checked.
+ * Client-side gate for portal pages: redirects to /login when there is no
+ * portal access token. `authed` is false during SSR/hydration and flips to the
+ * real value once the client snapshot of localStorage is read — pages should
+ * gate their queries on it.
  */
-export function useRequireAuth(): { ready: boolean; authed: boolean } {
+export function useRequireAuth(): { authed: boolean } {
   const router = useRouter();
-  const [state, setState] = useState({ ready: false, authed: false });
+  const authed = useHasToken();
 
   useEffect(() => {
-    const authed = Boolean(getAccessToken());
-    setState({ ready: true, authed });
     if (!authed) router.replace("/login");
-  }, [router]);
+  }, [authed, router]);
 
-  return state;
+  return { authed };
 }

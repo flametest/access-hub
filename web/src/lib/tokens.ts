@@ -58,3 +58,14 @@ export function setAppTokens(
 export function getAppToken(accountId: string): string | null {
   return store()?.getItem(`${APP_PREFIX}${accountId}.access`) ?? null;
 }
+
+/**
+ * Notifies listeners when tokens may have changed in another tab. Used with
+ * useSyncExternalStore so React can read token state as an external store.
+ */
+export function subscribeToTokenChanges(onChange: () => void): () => void {
+  const s = store();
+  if (!s) return () => {};
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+}

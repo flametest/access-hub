@@ -22,6 +22,13 @@ const (
 	AccountSourceProvisioned = "provisioned"
 )
 
+// Grant effect values (role_resources.effect / account_grants.effect). deny
+// is reserved for M6; M1-M3 always store allow.
+const (
+	GrantEffectAllow = "allow"
+	GrantEffectDeny  = "deny"
+)
+
 // Account is a workspace (per-app) account: independent password + roles,
 // structurally bound to exactly one primary identity.
 type Account struct {
