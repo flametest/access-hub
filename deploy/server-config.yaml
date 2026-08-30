@@ -1,0 +1,43 @@
+AppConfig:
+  name: access-hub
+  addr: 0.0.0.0:8080
+  env: dev
+  withStack: true
+LogLevel: 0
+Datasource:
+  dialect: postgres
+  host: 127.0.0.1
+  port: 5432
+  username: accesshub
+  password: accesshub
+  database: accesshub
+  schema: public
+  debug: false
+Redis:
+  addr: 127.0.0.1:6379
+  db: 0
+Auth:
+  accessTokenTTL: 15m
+  refreshTokenTTL: 720h
+  rsaPrivateKeyPath: deploy/keys/private.pem
+  rsaPublicKeyPath: deploy/keys/public.pem
+  emailCodeTTL: 10m
+  emailCodeMaxAttempts: 5
+  sendCodeInterval: 60s
+  sendCodeIPLimit: 10
+  loginMaxAttempts: 5
+  loginLockDuration: 15m
+  allowAutoRegister: false
+  bcryptCost: 12
+Mailer:
+  driver: console
+  smtp:
+    host: 127.0.0.1
+    port: 1025
+    username: ""
+    password: ""
+    from: no-reply@access-hub.local
+Bootstrap:
+  adminUsername: admin
+  adminEmail: admin@access-hub.local
+  adminPassword: ""
