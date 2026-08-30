@@ -79,27 +79,27 @@ func (u *User) CanPortalLogin() bool {
 	return u.status == UserStatusActive && u.passwordHash != nil && *u.passwordHash != ""
 }
 
-func (u *User) ID() string                  { return u.id }
-func (u *User) Username() string            { return u.username }
-func (u *User) Email() string               { return u.email }
-func (u *User) EmailVerified() bool         { return u.emailVerified }
-func (u *User) PasswordHash() *string       { return u.passwordHash }
-func (u *User) Nickname() *string           { return u.nickname }
-func (u *User) AvatarURL() *string          { return u.avatarURL }
-func (u *User) Status() string              { return u.status }
-func (u *User) MustChangePassword() bool    { return u.mustChangePassword }
-func (u *User) LastLoginAt() *time.Time     { return u.lastLoginAt }
-func (u *User) CreatedAt() time.Time        { return u.createdAt }
+func (u *User) ID() string               { return u.id }
+func (u *User) Username() string         { return u.username }
+func (u *User) Email() string            { return u.email }
+func (u *User) EmailVerified() bool      { return u.emailVerified }
+func (u *User) PasswordHash() *string    { return u.passwordHash }
+func (u *User) Nickname() *string        { return u.nickname }
+func (u *User) AvatarURL() *string       { return u.avatarURL }
+func (u *User) Status() string           { return u.status }
+func (u *User) MustChangePassword() bool { return u.mustChangePassword }
+func (u *User) LastLoginAt() *time.Time  { return u.lastLoginAt }
+func (u *User) CreatedAt() time.Time     { return u.createdAt }
 
-func (u *User) SetUsername(v string)            { u.username = v }
-func (u *User) SetEmail(v string)               { u.email = v }
-func (u *User) SetEmailVerified(v bool)         { u.emailVerified = v }
-func (u *User) SetPasswordHash(hash *string)    { u.passwordHash = hash }
+func (u *User) SetUsername(v string)              { u.username = v }
+func (u *User) SetEmail(v string)                 { u.email = v }
+func (u *User) SetEmailVerified(v bool)           { u.emailVerified = v }
+func (u *User) SetPasswordHash(hash *string)      { u.passwordHash = hash }
 func (u *User) SetPasswordHashString(hash string) { u.passwordHash = strPtr(hash) }
-func (u *User) SetNickname(v *string)           { u.nickname = v }
-func (u *User) SetAvatarURL(v *string)          { u.avatarURL = v }
-func (u *User) SetMustChangePassword(v bool)    { u.mustChangePassword = v }
-func (u *User) SetLastLoginAt(at *time.Time)    { u.lastLoginAt = at }
+func (u *User) SetNickname(v *string)             { u.nickname = v }
+func (u *User) SetAvatarURL(v *string)            { u.avatarURL = v }
+func (u *User) SetMustChangePassword(v bool)      { u.mustChangePassword = v }
+func (u *User) SetLastLoginAt(at *time.Time)      { u.lastLoginAt = at }
 
 // Disable transitions active -> disabled.
 func (u *User) Disable() error {

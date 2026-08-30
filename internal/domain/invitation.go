@@ -109,17 +109,17 @@ func (i *Invitation) Expire() error {
 	return nil
 }
 
-func (i *Invitation) ID() string                { return i.id }
-func (i *Invitation) AppID() string             { return i.appID }
-func (i *Invitation) Email() string             { return i.email }
-func (i *Invitation) RoleIDs() []string         { return i.roleIDs }
-func (i *Invitation) InvitedBy() string         { return i.invitedBy }
-func (i *Invitation) CodeHash() string          { return i.codeHash }
-func (i *Invitation) ExpiresAt() time.Time      { return i.expiresAt }
-func (i *Invitation) AcceptedAt() *time.Time    { return i.acceptedAt }
+func (i *Invitation) ID() string                 { return i.id }
+func (i *Invitation) AppID() string              { return i.appID }
+func (i *Invitation) Email() string              { return i.email }
+func (i *Invitation) RoleIDs() []string          { return i.roleIDs }
+func (i *Invitation) InvitedBy() string          { return i.invitedBy }
+func (i *Invitation) CodeHash() string           { return i.codeHash }
+func (i *Invitation) ExpiresAt() time.Time       { return i.expiresAt }
+func (i *Invitation) AcceptedAt() *time.Time     { return i.acceptedAt }
 func (i *Invitation) AcceptedAccountID() *string { return i.acceptedAccountID }
-func (i *Invitation) Status() string            { return i.status }
-func (i *Invitation) CreatedAt() time.Time      { return i.createdAt }
+func (i *Invitation) Status() string             { return i.status }
+func (i *Invitation) CreatedAt() time.Time       { return i.createdAt }
 
-func (i *Invitation) SetCodeHash(v string) { i.codeHash = v }
+func (i *Invitation) SetCodeHash(v string)     { i.codeHash = v }
 func (i *Invitation) SetExpiresAt(v time.Time) { i.expiresAt = v }

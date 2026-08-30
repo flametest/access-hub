@@ -66,10 +66,10 @@ func (o *Org) Enable() error {
 	return nil
 }
 
-func (o *Org) ID() string       { return o.id }
-func (o *Org) Key() string      { return o.key }
-func (o *Org) Name() string     { return o.name }
-func (o *Org) Status() string   { return o.status }
+func (o *Org) ID() string           { return o.id }
+func (o *Org) Key() string          { return o.key }
+func (o *Org) Name() string         { return o.name }
+func (o *Org) Status() string       { return o.status }
 func (o *Org) CreatedAt() time.Time { return o.createdAt }
 
 func (o *Org) SetKey(v string)  { o.key = v }

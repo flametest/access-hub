@@ -83,30 +83,30 @@ func (r *Resource) ToDO() *model.Resource {
 // IsAPI reports whether the resource is an api-type resource (method+path set).
 func (r *Resource) IsAPI() bool { return r.typ == ResourceTypeAPI }
 
-func (r *Resource) ID() string        { return r.id }
-func (r *Resource) AppID() string     { return r.appID }
-func (r *Resource) ParentID() *string { return r.parentID }
-func (r *Resource) Type() string      { return r.typ }
-func (r *Resource) Code() string      { return r.code }
-func (r *Resource) Name() string      { return r.name }
-func (r *Resource) Sort() int         { return r.sort }
-func (r *Resource) Status() string    { return r.status }
-func (r *Resource) Visible() bool     { return r.visible }
-func (r *Resource) Icon() *string     { return r.icon }
-func (r *Resource) Method() *string   { return r.method }
-func (r *Resource) RoutePath() *string { return r.routePath }
-func (r *Resource) Extra() []byte     { return r.extra }
+func (r *Resource) ID() string           { return r.id }
+func (r *Resource) AppID() string        { return r.appID }
+func (r *Resource) ParentID() *string    { return r.parentID }
+func (r *Resource) Type() string         { return r.typ }
+func (r *Resource) Code() string         { return r.code }
+func (r *Resource) Name() string         { return r.name }
+func (r *Resource) Sort() int            { return r.sort }
+func (r *Resource) Status() string       { return r.status }
+func (r *Resource) Visible() bool        { return r.visible }
+func (r *Resource) Icon() *string        { return r.icon }
+func (r *Resource) Method() *string      { return r.method }
+func (r *Resource) RoutePath() *string   { return r.routePath }
+func (r *Resource) Extra() []byte        { return r.extra }
 func (r *Resource) CreatedAt() time.Time { return r.createdAt }
 
-func (r *Resource) SetAppID(v string)    { r.appID = v }
-func (r *Resource) SetParentID(v *string) { r.parentID = v }
-func (r *Resource) SetType(v string)     { r.typ = v }
-func (r *Resource) SetCode(v string)     { r.code = v }
-func (r *Resource) SetName(v string)     { r.name = v }
-func (r *Resource) SetSort(v int)        { r.sort = v }
-func (r *Resource) SetStatus(v string)   { r.status = v }
-func (r *Resource) SetVisible(v bool)    { r.visible = v }
-func (r *Resource) SetIcon(v *string)    { r.icon = v }
-func (r *Resource) SetMethod(v *string)  { r.method = v }
+func (r *Resource) SetAppID(v string)      { r.appID = v }
+func (r *Resource) SetParentID(v *string)  { r.parentID = v }
+func (r *Resource) SetType(v string)       { r.typ = v }
+func (r *Resource) SetCode(v string)       { r.code = v }
+func (r *Resource) SetName(v string)       { r.name = v }
+func (r *Resource) SetSort(v int)          { r.sort = v }
+func (r *Resource) SetStatus(v string)     { r.status = v }
+func (r *Resource) SetVisible(v bool)      { r.visible = v }
+func (r *Resource) SetIcon(v *string)      { r.icon = v }
+func (r *Resource) SetMethod(v *string)    { r.method = v }
 func (r *Resource) SetRoutePath(v *string) { r.routePath = v }
-func (r *Resource) SetExtra(v []byte)    { r.extra = v }
+func (r *Resource) SetExtra(v []byte)      { r.extra = v }

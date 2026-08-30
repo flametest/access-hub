@@ -86,19 +86,19 @@ func (a *App) Enable() error {
 	return nil
 }
 
-func (a *App) ID() string          { return a.id }
-func (a *App) Key() string         { return a.key }
-func (a *App) OrgID() *string      { return a.orgID }
-func (a *App) Name() string        { return a.name }
-func (a *App) Type() string        { return a.typ }
+func (a *App) ID() string           { return a.id }
+func (a *App) Key() string          { return a.key }
+func (a *App) OrgID() *string       { return a.orgID }
+func (a *App) Name() string         { return a.name }
+func (a *App) Type() string         { return a.typ }
 func (a *App) Description() *string { return a.description }
-func (a *App) LogoURL() *string    { return a.logoURL }
-func (a *App) Status() string      { return a.status }
+func (a *App) LogoURL() *string     { return a.logoURL }
+func (a *App) Status() string       { return a.status }
 func (a *App) CreatedAt() time.Time { return a.createdAt }
 
-func (a *App) SetKey(v string)         { a.key = v }
-func (a *App) SetOrgID(v *string)      { a.orgID = v }
-func (a *App) SetName(v string)        { a.name = v }
-func (a *App) SetType(v string)        { a.typ = v }
+func (a *App) SetKey(v string)          { a.key = v }
+func (a *App) SetOrgID(v *string)       { a.orgID = v }
+func (a *App) SetName(v string)         { a.name = v }
+func (a *App) SetType(v string)         { a.typ = v }
 func (a *App) SetDescription(v *string) { a.description = v }
-func (a *App) SetLogoURL(v *string)    { a.logoURL = v }
+func (a *App) SetLogoURL(v *string)     { a.logoURL = v }

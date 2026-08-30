@@ -32,17 +32,17 @@ const (
 // Account is a workspace (per-app) account: independent password + roles,
 // structurally bound to exactly one primary identity.
 type Account struct {
-	id          string
-	identityID  string
-	appID       string
-	email       string
-	username    *string
+	id           string
+	identityID   string
+	appID        string
+	email        string
+	username     *string
 	passwordHash string
-	displayName *string
-	status      string
-	source      string
-	lastLoginAt *time.Time
-	createdAt   time.Time
+	displayName  *string
+	status       string
+	source       string
+	lastLoginAt  *time.Time
+	createdAt    time.Time
 }
 
 func NewAccount(identityID, appID, email, passwordHash, source string) *Account {
@@ -58,17 +58,17 @@ func NewAccount(identityID, appID, email, passwordHash, source string) *Account 
 
 func NewAccountFromDO(do *model.Account) *Account {
 	return &Account{
-		id:          do.Id,
-		identityID:  do.IdentityID,
-		appID:       do.AppID,
-		email:       do.Email,
-		username:    do.Username,
+		id:           do.Id,
+		identityID:   do.IdentityID,
+		appID:        do.AppID,
+		email:        do.Email,
+		username:     do.Username,
 		passwordHash: do.PasswordHash,
-		displayName: do.DisplayName,
-		status:      do.Status,
-		source:      do.Source,
-		lastLoginAt: do.LastLoginAt,
-		createdAt:   do.CreatedAt,
+		displayName:  do.DisplayName,
+		status:       do.Status,
+		source:       do.Source,
+		lastLoginAt:  do.LastLoginAt,
+		createdAt:    do.CreatedAt,
 	}
 }
 
@@ -123,9 +123,9 @@ func (a *Account) Source() string          { return a.source }
 func (a *Account) LastLoginAt() *time.Time { return a.lastLoginAt }
 func (a *Account) CreatedAt() time.Time    { return a.createdAt }
 
-func (a *Account) SetIdentityID(v string)         { a.identityID = v }
-func (a *Account) SetEmail(v string)              { a.email = v }
-func (a *Account) SetUsername(v *string)          { a.username = v }
-func (a *Account) SetPasswordHash(v string)       { a.passwordHash = v }
-func (a *Account) SetDisplayName(v *string)       { a.displayName = v }
-func (a *Account) SetLastLoginAt(at *time.Time)   { a.lastLoginAt = at }
+func (a *Account) SetIdentityID(v string)       { a.identityID = v }
+func (a *Account) SetEmail(v string)            { a.email = v }
+func (a *Account) SetUsername(v *string)        { a.username = v }
+func (a *Account) SetPasswordHash(v string)     { a.passwordHash = v }
+func (a *Account) SetDisplayName(v *string)     { a.displayName = v }
+func (a *Account) SetLastLoginAt(at *time.Time) { a.lastLoginAt = at }

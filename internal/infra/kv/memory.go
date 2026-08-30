@@ -2,6 +2,7 @@ package kv
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -56,14 +57,15 @@ func (s *MemoryStore) Del(_ context.Context, key string) error {
 	return nil
 }
 
+// Incr creates the key at 1 (with TTL) on first increment and preserves the
+// original expiry on subsequent ones.
 func (s *MemoryStore) Incr(_ context.Context, key string, ttl time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now()
 	entry, ok := s.entries[key]
-	created := !ok || (!entry.expiresAt.IsZero() && now.After(entry.expiresAt))
-	if created {
+	if !ok || (!entry.expiresAt.IsZero() && now.After(entry.expiresAt)) {
 		newEntry := memoryEntry{value: "1"}
 		if ttl > 0 {
 			newEntry.expiresAt = now.Add(ttl)
@@ -72,13 +74,9 @@ func (s *MemoryStore) Incr(_ context.Context, key string, ttl time.Duration) (in
 		return 1, nil
 	}
 
-	count := parseInt64(entry.value) + 1
-	if !entry.expiresAt.IsZero() {
-		// Keep the original expiry; TTL is only set on creation.
-		s.entries[key] = memoryEntry{value: itoa(count), expiresAt: entry.expiresAt}
-	} else {
-		s.entries[key] = memoryEntry{value: itoa(count)}
-	}
+	count, _ := strconv.ParseInt(entry.value, 10, 64)
+	count++
+	s.entries[key] = memoryEntry{value: strconv.FormatInt(count, 10), expiresAt: entry.expiresAt}
 	return count, nil
 }
 
@@ -98,45 +96,4 @@ func (s *MemoryStore) TTL(_ context.Context, key string) (time.Duration, error) 
 		return 0, ErrNotFound
 	}
 	return remaining, nil
-}
-
-func parseInt64(s string) int64 {
-	var n int64
-	neg := false
-	for i, c := range s {
-		if i == 0 && c == '-' {
-			neg = true
-			continue
-		}
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int64(c-'0')
-	}
-	if neg {
-		return -n
-	}
-	return n
-}
-
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

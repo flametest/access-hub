@@ -18,45 +18,45 @@ const (
 
 // Session is a refresh-token record with in-place rotation.
 type Session struct {
-	id              string
-	userID          string
-	scope           string
-	accountID       *string
-	appID           *string
+	id               string
+	userID           string
+	scope            string
+	accountID        *string
+	appID            *string
 	refreshTokenHash string
-	device          *string
-	ip              *string
-	lastUsedAt      *time.Time
-	rotationCount   int64
-	expiresAt       time.Time
-	revokedAt       *time.Time
-	createdAt       time.Time
+	device           *string
+	ip               *string
+	lastUsedAt       *time.Time
+	rotationCount    int64
+	expiresAt        time.Time
+	revokedAt        *time.Time
+	createdAt        time.Time
 }
 
 func NewSession(userID, scope, refreshTokenHash string, expiresAt time.Time) *Session {
 	return &Session{
-		userID:          userID,
-		scope:           scope,
+		userID:           userID,
+		scope:            scope,
 		refreshTokenHash: refreshTokenHash,
-		expiresAt:       expiresAt,
+		expiresAt:        expiresAt,
 	}
 }
 
 func NewSessionFromDO(do *model.Session) *Session {
 	return &Session{
-		id:              do.Id,
-		userID:          do.UserID,
-		scope:           do.Scope,
-		accountID:       do.AccountID,
-		appID:           do.AppID,
+		id:               do.Id,
+		userID:           do.UserID,
+		scope:            do.Scope,
+		accountID:        do.AccountID,
+		appID:            do.AppID,
 		refreshTokenHash: do.RefreshTokenHash,
-		device:          do.Device,
-		ip:              do.IP,
-		lastUsedAt:      do.LastUsedAt,
-		rotationCount:   do.RotationCount,
-		expiresAt:       do.ExpiresAt,
-		revokedAt:       do.RevokedAt,
-		createdAt:       do.CreatedAt,
+		device:           do.Device,
+		ip:               do.IP,
+		lastUsedAt:       do.LastUsedAt,
+		rotationCount:    do.RotationCount,
+		expiresAt:        do.ExpiresAt,
+		revokedAt:        do.RevokedAt,
+		createdAt:        do.CreatedAt,
 	}
 }
 
@@ -121,13 +121,13 @@ func (s *Session) SetScope(v string) error {
 	s.scope = v
 	return nil
 }
-func (s *Session) SetAccountID(v *string)    { s.accountID = v }
-func (s *Session) SetAppID(v *string)        { s.appID = v }
+func (s *Session) SetAccountID(v *string)       { s.accountID = v }
+func (s *Session) SetAppID(v *string)           { s.appID = v }
 func (s *Session) SetRefreshTokenHash(v string) { s.refreshTokenHash = v }
-func (s *Session) SetDevice(v *string)       { s.device = v }
-func (s *Session) SetIP(v *string)           { s.ip = v }
-func (s *Session) SetLastUsedAt(v *time.Time) { s.lastUsedAt = v }
-func (s *Session) SetExpiresAt(v time.Time)  { s.expiresAt = v }
+func (s *Session) SetDevice(v *string)          { s.device = v }
+func (s *Session) SetIP(v *string)              { s.ip = v }
+func (s *Session) SetLastUsedAt(v *time.Time)   { s.lastUsedAt = v }
+func (s *Session) SetExpiresAt(v time.Time)     { s.expiresAt = v }
 
 // jsonStrings decodes a JSON array of strings, tolerating nil/empty input.
 func jsonStrings(raw []byte) []string {

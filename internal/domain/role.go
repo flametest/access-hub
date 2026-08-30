@@ -67,17 +67,17 @@ func (r *Role) IsSuperAdmin() bool {
 	return r.builtIn && r.scope == RoleScopeGlobal && r.code == BuiltInRoleSuperAdmin
 }
 
-func (r *Role) ID() string        { return r.id }
-func (r *Role) AppID() string     { return r.appID }
-func (r *Role) Code() string      { return r.code }
-func (r *Role) Name() string      { return r.name }
-func (r *Role) Scope() string     { return r.scope }
-func (r *Role) BuiltIn() bool     { return r.builtIn }
+func (r *Role) ID() string           { return r.id }
+func (r *Role) AppID() string        { return r.appID }
+func (r *Role) Code() string         { return r.code }
+func (r *Role) Name() string         { return r.name }
+func (r *Role) Scope() string        { return r.scope }
+func (r *Role) BuiltIn() bool        { return r.builtIn }
 func (r *Role) CreatedAt() time.Time { return r.createdAt }
 
-func (r *Role) SetAppID(v string)  { r.appID = v }
-func (r *Role) SetCode(v string)   { r.code = v }
-func (r *Role) SetName(v string)   { r.name = v }
+func (r *Role) SetAppID(v string) { r.appID = v }
+func (r *Role) SetCode(v string)  { r.code = v }
+func (r *Role) SetName(v string)  { r.name = v }
 func (r *Role) SetScope(v string) error {
 	if v != RoleScopeApp && v != RoleScopeGlobal {
 		return verrors.BadRequestError(fmt.Sprintf("invalid role scope %q", v))
@@ -85,4 +85,4 @@ func (r *Role) SetScope(v string) error {
 	r.scope = v
 	return nil
 }
-func (r *Role) SetBuiltIn(v bool)  { r.builtIn = v }
+func (r *Role) SetBuiltIn(v bool) { r.builtIn = v }

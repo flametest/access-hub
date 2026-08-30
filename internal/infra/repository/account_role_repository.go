@@ -126,8 +126,9 @@ func (r *accountRoleRepoImpl) ListPolicyRows(ctx context.Context) ([]PolicyAccou
 	var out []PolicyAccountRole
 	err := r.db.WithContext(ctx).
 		Table("account_roles").
-		Select("account_roles.id, account_roles.account_id, roles.code AS role_code, roles.scope AS role_scope, "+
-			"roles.app_id AS role_app_id, apps.key AS account_app_key, account_roles.expires_at").
+		Select("account_roles.id, account_roles.account_id, accounts.app_id AS account_app_id, " +
+			"apps.key AS account_app_key, roles.code AS role_code, roles.scope AS role_scope, " +
+			"roles.app_id AS role_app_id, account_roles.expires_at").
 		Joins("JOIN roles ON roles.id = account_roles.role_id AND roles.deleted_at IS NULL").
 		Joins("JOIN accounts ON accounts.id = account_roles.account_id AND accounts.deleted_at IS NULL AND accounts.status <> 'disabled'").
 		Joins("JOIN apps ON apps.id = accounts.app_id AND apps.deleted_at IS NULL AND apps.status = 'active'").

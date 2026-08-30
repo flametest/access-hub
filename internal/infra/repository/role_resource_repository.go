@@ -93,8 +93,8 @@ func (r *roleResourceRepoImpl) ListPolicyRows(ctx context.Context) ([]PolicyRole
 	var out []PolicyRoleResource
 	err := r.db.WithContext(ctx).
 		Table("role_resources").
-		Select("role_resources.id, roles.id AS role_id, roles.code AS role_code, roles.scope AS role_scope, "+
-			"roles.built_in AS role_built_in, roles.app_id AS role_app_id, resources.code AS resource_code, "+
+		Select("role_resources.id, roles.id AS role_id, roles.code AS role_code, roles.scope AS role_scope, " +
+			"roles.built_in AS role_built_in, roles.app_id AS role_app_id, resources.code AS resource_code, " +
 			"resources.app_id AS resource_app_id, apps.key AS resource_app_key").
 		Joins("JOIN roles ON roles.id = role_resources.role_id AND roles.deleted_at IS NULL").
 		Joins("JOIN resources ON resources.id = role_resources.resource_id AND resources.deleted_at IS NULL AND resources.status = 'active'").

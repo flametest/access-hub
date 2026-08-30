@@ -68,7 +68,7 @@ func (r *accountGrantRepoImpl) ListPolicyRows(ctx context.Context) ([]PolicyAcco
 	var out []PolicyAccountGrant
 	err := r.db.WithContext(ctx).
 		Table("account_grants").
-		Select("account_grants.id, account_grants.account_id, resources.code AS resource_code, "+
+		Select("account_grants.id, account_grants.account_id, resources.code AS resource_code, " +
 			"apps.key AS resource_app_key, account_grants.expires_at").
 		Joins("JOIN resources ON resources.id = account_grants.resource_id AND resources.deleted_at IS NULL AND resources.status = 'active'").
 		Joins("JOIN apps ON apps.id = resources.app_id AND apps.deleted_at IS NULL AND apps.status = 'active'").

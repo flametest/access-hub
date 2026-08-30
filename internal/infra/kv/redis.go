@@ -61,13 +61,16 @@ func (s *RedisStore) Incr(ctx context.Context, key string, ttl time.Duration) (i
 func (s *RedisStore) TTL(ctx context.Context, key string) (time.Duration, error) {
 	d, err := s.client.TTL(ctx, key)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return 0, ErrNotFound
-		}
 		return 0, err
 	}
-	if d == -2*time.Second {
+	// go-redis v9 encodes the raw TTL replies as-is in nanoseconds:
+	// -2ns = key does not exist, -1ns = key exists without expiry.
+	switch d {
+	case -2:
 		return 0, ErrNotFound
+	case -1:
+		return -1 * time.Second, nil
+	default:
+		return d, nil
 	}
-	return d, nil
 }

@@ -24,10 +24,11 @@ type PolicyRoleResource struct {
 // account's app (bindings are dom-scoped by the account's app).
 type PolicyAccountRole struct {
 	AccountID     string     `gorm:"column:account_id"`
+	AccountAppID  string     `gorm:"column:account_app_id"`
+	AccountAppKey string     `gorm:"column:account_app_key"`
 	RoleCode      string     `gorm:"column:role_code"`
 	RoleScope     string     `gorm:"column:role_scope"`
 	RoleAppID     string     `gorm:"column:role_app_id"`
-	AccountAppKey string     `gorm:"column:account_app_key"`
 	ExpiresAt     *time.Time `gorm:"column:expires_at"`
 }
 
