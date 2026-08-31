@@ -18,10 +18,30 @@ type AccountGrantRepo interface {
 	// Remove soft-deletes the grant; zero rows yields NotFoundError.
 	Remove(ctx context.Context, accountID, resourceID string) error
 	ListByAccount(ctx context.Context, accountID string) ([]*model.AccountGrant, error)
+	// FindByID resolves one grant row.
+	FindByID(ctx context.Context, id string) (*model.AccountGrant, error)
+	// RemoveByID soft-deletes the grant by its own id; zero rows yields
+	// NotFoundError.
+	RemoveByID(ctx context.Context, id string) error
+	// ListByAccountWithResource returns the account's grants joined with the
+	// display fields of their resources.
+	ListByAccountWithResource(ctx context.Context, accountID string) ([]AccountGrantWithResource, error)
+	// ListByResource returns the grants attached to one resource (used to
+	// clean up in-memory policies when a resource is deleted/disabled).
+	ListByResource(ctx context.Context, resourceID string) ([]*model.AccountGrant, error)
 	// ListPolicyRows returns the full account_grants join used by the Casbin
 	// loader. Rows referencing soft-deleted/disabled accounts, resources or
 	// apps are excluded by the query itself.
 	ListPolicyRows(ctx context.Context) ([]PolicyAccountGrant, error)
+}
+
+// AccountGrantWithResource is an account_grants row joined with the display
+// fields of its resource.
+type AccountGrantWithResource struct {
+	Grant        model.AccountGrant
+	ResourceCode string `gorm:"column:resource_code"`
+	ResourceName string `gorm:"column:resource_name"`
+	ResourceType string `gorm:"column:resource_type"`
 }
 
 type accountGrantRepoImpl struct {
@@ -76,5 +96,38 @@ func (r *accountGrantRepoImpl) ListPolicyRows(ctx context.Context) ([]PolicyAcco
 		Joins("JOIN accounts ON accounts.id = account_grants.account_id AND accounts.deleted_at IS NULL AND accounts.status <> 'disabled'").
 		Where("account_grants.deleted_at IS NULL").
 		Scan(&out).Error
+	return out, err
+}
+
+func (r *accountGrantRepoImpl) FindByID(ctx context.Context, id string) (*model.AccountGrant, error) {
+	var grant model.AccountGrant
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&grant).Error; err != nil {
+		return nil, translateFirst(err, "grant %s not found", id)
+	}
+	return &grant, nil
+}
+
+func (r *accountGrantRepoImpl) RemoveByID(ctx context.Context, id string) error {
+	res := r.db.WithContext(ctx).Where("id = ?", id).Delete(&model.AccountGrant{})
+	return updateRowsAffected(res, fmt.Sprintf("grant %s not found", id))
+}
+
+func (r *accountGrantRepoImpl) ListByAccountWithResource(ctx context.Context, accountID string) ([]AccountGrantWithResource, error) {
+	var out []AccountGrantWithResource
+	err := r.db.WithContext(ctx).
+		Table("account_grants").
+		Select("account_grants.*, resources.code AS resource_code, resources.name AS resource_name, resources.type AS resource_type").
+		Joins("JOIN resources ON resources.id = account_grants.resource_id AND resources.deleted_at IS NULL").
+		Where("account_grants.account_id = ? AND account_grants.deleted_at IS NULL", accountID).
+		Order("account_grants.created_at ASC").
+		Scan(&out).Error
+	return out, err
+}
+
+func (r *accountGrantRepoImpl) ListByResource(ctx context.Context, resourceID string) ([]*model.AccountGrant, error) {
+	var out []*model.AccountGrant
+	err := r.db.WithContext(ctx).
+		Where("resource_id = ?", resourceID).
+		Find(&out).Error
 	return out, err
 }

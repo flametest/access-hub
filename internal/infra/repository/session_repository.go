@@ -30,6 +30,10 @@ type SessionRepo interface {
 	// only; design.md §7: password change revokes identity-scope sessions but
 	// leaves workspace (account) sessions alone.
 	RevokeAllForUserByScope(ctx context.Context, userID, scope string, at time.Time) error
+	// RevokeAllForUserByScopeExcept revokes the identity's sessions of one
+	// scope, keeping exceptSessionID active (e.g. "change password, stay
+	// signed in on this device").
+	RevokeAllForUserByScopeExcept(ctx context.Context, userID, scope, exceptSessionID string, at time.Time) error
 	// RevokeAllForAccount revokes the workspace account's sessions (e.g. after
 	// an account password reset).
 	RevokeAllForAccount(ctx context.Context, accountID string, at time.Time) error
@@ -119,4 +123,16 @@ func (r *sessionRepoImpl) UpdateFields(ctx context.Context, id string, fields ma
 	}
 	res := r.db.WithContext(ctx).Model(&model.Session{}).Where("id = ?", id).Updates(fields)
 	return updateRowsAffected(res, fmt.Sprintf("session %s not found", id))
+}
+
+// RevokeAllForUserByScopeExcept revokes the identity's sessions of one scope,
+// keeping exceptSessionID active. An empty exceptSessionID revokes all.
+func (r *sessionRepoImpl) RevokeAllForUserByScopeExcept(ctx context.Context, userID, scope, exceptSessionID string, at time.Time) error {
+	where := "user_id = ? AND scope = ?"
+	args := []any{userID, scope}
+	if exceptSessionID != "" {
+		where += " AND id <> ?"
+		args = append(args, exceptSessionID)
+	}
+	return r.revokeWhere(ctx, where, at, args...)
 }

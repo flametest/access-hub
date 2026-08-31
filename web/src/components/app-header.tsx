@@ -8,7 +8,7 @@ import { Initials } from "@/components/initials";
 import { Spinner } from "@/components/spinner";
 import { api } from "@/lib/api";
 import type { Me } from "@/lib/types";
-import { clearSession } from "@/lib/tokens";
+import { endSession } from "@/lib/session";
 
 const NAV = [
   { href: "/workspaces", label: "Workspaces", icon: "grid" as const },
@@ -27,7 +27,7 @@ export function AppHeader({ me }: { me?: Me }) {
     } catch {
       // Session is already dead server-side or unreachable — clear locally anyway.
     }
-    clearSession();
+    endSession();
     router.replace("/login");
   }
 

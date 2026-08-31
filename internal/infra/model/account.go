@@ -16,7 +16,7 @@ type Account struct {
 	AppID        string     `gorm:"column:app_id"`
 	Email        string     `gorm:"column:email"`
 	Username     *string    `gorm:"column:username"`
-	PasswordHash string     `gorm:"column:password_hash"`
+	PasswordHash *string    `gorm:"column:password_hash"` // NULL for OIDC auto-provisioned accounts (cannot direct-login until activated)
 	DisplayName  *string    `gorm:"column:display_name"`
 	Status       string     `gorm:"column:status"`
 	Source       string     `gorm:"column:source"`

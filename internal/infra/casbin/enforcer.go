@@ -2,6 +2,7 @@ package casbinx
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
@@ -38,9 +39,21 @@ func NewEnforcer(loader persist.Adapter) (*Enforcer, error) {
 	return &Enforcer{e: e}, nil
 }
 
+// normalizeDom aligns the domain argument with the loader's convention
+// (`app:{key}`, or the literal "*"). Callers may pass a bare app key — the
+// enforcer is the single place where the dom format is decided, so read and
+// write paths can never drift apart.
+func normalizeDom(dom string) string {
+	if dom == "" || dom == DomWildcard || strings.HasPrefix(dom, DomPrefixApp) {
+		return dom
+	}
+	return DomPrefixApp + dom
+}
+
 // Enforce evaluates the request (sub, dom, obj, act). Fail-close: an internal
 // error yields (false, err), never an allow.
 func (en *Enforcer) Enforce(sub, dom, obj, act string) (bool, error) {
+	dom = normalizeDom(dom)
 	ok, err := en.e.Enforce(sub, dom, obj, act)
 	if err != nil {
 		return false, verrors.Wrap(err, fmt.Sprintf("enforce %s@%s:%s:%s", sub, dom, obj, act))
@@ -57,11 +70,15 @@ func (en *Enforcer) Reload() error {
 	return nil
 }
 
-// AddPolicy applies an incremental p rule in-memory (no storage).
+// AddPolicy applies an incremental p rule in-memory (no storage). The dom
+// term (rule[1]) is normalized like Enforce.
 func (en *Enforcer) AddPolicy(rule ...string) (bool, error) {
 	params := make([]interface{}, len(rule))
 	for i, r := range rule {
 		params[i] = r
+	}
+	if len(params) >= 2 {
+		params[1] = normalizeDom(params[1].(string))
 	}
 	ok, err := en.e.AddPolicy(params...)
 	if err != nil {
@@ -70,11 +87,15 @@ func (en *Enforcer) AddPolicy(rule ...string) (bool, error) {
 	return ok, nil
 }
 
-// RemovePolicy removes a p rule in-memory (no storage).
+// RemovePolicy removes a p rule in-memory (no storage). The dom term
+// (rule[1]) is normalized like Enforce.
 func (en *Enforcer) RemovePolicy(rule ...string) (bool, error) {
 	params := make([]interface{}, len(rule))
 	for i, r := range rule {
 		params[i] = r
+	}
+	if len(params) >= 2 {
+		params[1] = normalizeDom(params[1].(string))
 	}
 	ok, err := en.e.RemovePolicy(params...)
 	if err != nil {
@@ -84,10 +105,14 @@ func (en *Enforcer) RemovePolicy(rule ...string) (bool, error) {
 }
 
 // AddGroupingPolicy applies an incremental g rule (role binding) in-memory.
+// The dom term (rule[2]) is normalized like Enforce.
 func (en *Enforcer) AddGroupingPolicy(rule ...string) (bool, error) {
 	params := make([]interface{}, len(rule))
 	for i, r := range rule {
 		params[i] = r
+	}
+	if len(params) >= 3 {
+		params[2] = normalizeDom(params[2].(string))
 	}
 	ok, err := en.e.AddGroupingPolicy(params...)
 	if err != nil {
@@ -96,11 +121,15 @@ func (en *Enforcer) AddGroupingPolicy(rule ...string) (bool, error) {
 	return ok, nil
 }
 
-// RemoveGroupingPolicy removes a g rule in-memory.
+// RemoveGroupingPolicy removes a g rule in-memory. The dom term (rule[2])
+// is normalized like Enforce.
 func (en *Enforcer) RemoveGroupingPolicy(rule ...string) (bool, error) {
 	params := make([]interface{}, len(rule))
 	for i, r := range rule {
 		params[i] = r
+	}
+	if len(params) >= 3 {
+		params[2] = normalizeDom(params[2].(string))
 	}
 	ok, err := en.e.RemoveGroupingPolicy(params...)
 	if err != nil {

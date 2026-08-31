@@ -15,6 +15,7 @@ import (
 // Subject/role prefixes used inside Casbin rules.
 const (
 	SubjectPrefixAccount = "account:"
+	SubjectPrefixClient  = "client:"
 	RolePrefix           = "role:"
 	DomPrefixApp         = "app:"
 	DomWildcard          = "*"
@@ -28,11 +29,21 @@ var errReadOnly = errors.New("casbin loader adapter is read-only")
 // Loader is the read-only Casbin adapter: it loads the full policy set by
 // translating business-table rows (design.md §6.1). Policies are never
 // persisted to a casbin_rule table.
+//
+// M4 addition: every ACTIVE oauth_clients row with the client_credentials
+// grant is translated into a full-access rule for its OWN app:
+//
+//	p, client:{client_id}, app:{appKey}, *, *
+//
+// (documented M4 decision: service tokens get full access to their own app's
+// resources by default; tighten later via per-client scope policies).
 type Loader struct {
 	roleRepo         repository.RoleRepo
 	roleResourceRepo repository.RoleResourceRepo
 	accountRoleRepo  repository.AccountRoleRepo
 	accountGrantRepo repository.AccountGrantRepo
+	oauthClientRepo  repository.OAuthClientRepo
+	appRepo          repository.AppRepo
 }
 
 var _ persist.Adapter = (*Loader)(nil)
@@ -43,12 +54,16 @@ func NewLoader(
 	roleResourceRepo repository.RoleResourceRepo,
 	accountRoleRepo repository.AccountRoleRepo,
 	accountGrantRepo repository.AccountGrantRepo,
+	oauthClientRepo repository.OAuthClientRepo,
+	appRepo repository.AppRepo,
 ) *Loader {
 	return &Loader{
 		roleRepo:         roleRepo,
 		roleResourceRepo: roleResourceRepo,
 		accountRoleRepo:  accountRoleRepo,
 		accountGrantRepo: accountGrantRepo,
+		oauthClientRepo:  oauthClientRepo,
+		appRepo:          appRepo,
 	}
 }
 
@@ -75,7 +90,55 @@ func (l *Loader) LoadPolicy(m model.Model) error {
 	if err := l.loadAccountRoleRules(m, now); err != nil {
 		return err
 	}
-	return l.loadAccountGrantRules(m, now)
+	if err := l.loadAccountGrantRules(m, now); err != nil {
+		return err
+	}
+	return l.loadServiceClientRules(m)
+}
+
+// loadServiceClientRules emits one wildcard p rule per active
+// client_credentials oauth client:
+//
+//	p, client:{client_id}, app:{client app key}, *, *
+func (l *Loader) loadServiceClientRules(m model.Model) error {
+	if l.oauthClientRepo == nil {
+		return nil
+	}
+	clients, err := l.oauthClientRepo.ListActiveClientCredential(context.Background())
+	if err != nil {
+		return fmt.Errorf("load oauth clients: %w", err)
+	}
+	for _, client := range clients {
+		// The dom follows the client's app; a missing/deleted app yields no
+		// rule (FindByID not-found is treated as skip).
+		app, err := l.appOfClient(client.AppID)
+		if err != nil {
+			return err
+		}
+		if app == "" {
+			continue
+		}
+		rule := []string{SubjectPrefixClient + client.Id, DomPrefixApp + app, DomWildcard, ActWildcard}
+		if err := addRule(m, "p", "p", rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// appOfClient resolves the client's app key, skipping soft-deleted apps.
+func (l *Loader) appOfClient(appID string) (string, error) {
+	if l.appRepo == nil {
+		return "", nil
+	}
+	app, err := l.appRepo.FindByID(context.Background(), appID)
+	if err != nil {
+		if repository.IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("load oauth client app %s: %w", appID, err)
+	}
+	return app.Key, nil
 }
 
 // loadRoleResourceRules emits p rules from role_resources:

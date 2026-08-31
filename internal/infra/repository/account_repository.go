@@ -22,6 +22,9 @@ type AccountRepo interface {
 	ListByIdentity(ctx context.Context, identityID string) ([]*model.Account, error)
 	// ListByApp returns the app's accounts; statusFilter nil means all.
 	ListByApp(ctx context.Context, appID string, statusFilter *string) ([]*model.Account, error)
+	// ListByAppQuery is the admin console variant: q (optional) matches
+	// email/username substring (lower-normalized); statusFilter nil means all.
+	ListByAppQuery(ctx context.Context, appID string, q *string, statusFilter *string) ([]*model.Account, error)
 	UpdateFields(ctx context.Context, id string, fields map[string]any) error
 	TouchLastLogin(ctx context.Context, id string, at time.Time) error
 }
@@ -84,6 +87,20 @@ func (r *accountRepoImpl) ListByApp(ctx context.Context, appID string, statusFil
 	}
 	var out []*model.Account
 	err := q.Order("created_at ASC").Find(&out).Error
+	return out, err
+}
+
+func (r *accountRepoImpl) ListByAppQuery(ctx context.Context, appID string, q *string, statusFilter *string) ([]*model.Account, error) {
+	query := r.db.WithContext(ctx).Where("app_id = ?", appID)
+	if q != nil && strings.TrimSpace(*q) != "" {
+		pattern := "%" + strings.ToLower(strings.TrimSpace(*q)) + "%"
+		query = query.Where("LOWER(email) LIKE ? OR LOWER(username) LIKE ?", pattern, pattern)
+	}
+	if statusFilter != nil && *statusFilter != "" {
+		query = query.Where("status = ?", *statusFilter)
+	}
+	var out []*model.Account
+	err := query.Order("created_at ASC").Find(&out).Error
 	return out, err
 }
 

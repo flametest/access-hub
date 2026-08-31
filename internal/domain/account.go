@@ -63,7 +63,7 @@ func NewAccountFromDO(do *model.Account) *Account {
 		appID:        do.AppID,
 		email:        do.Email,
 		username:     do.Username,
-		passwordHash: do.PasswordHash,
+		passwordHash: derefString(do.PasswordHash),
 		displayName:  do.DisplayName,
 		status:       do.Status,
 		source:       do.Source,
@@ -73,18 +73,32 @@ func NewAccountFromDO(do *model.Account) *Account {
 }
 
 func (a *Account) ToDO() *model.Account {
+	var hash *string
+	if a.passwordHash != "" {
+		h := a.passwordHash
+		hash = &h
+	}
 	return &model.Account{
 		BasePostgres: vgorm.BasePostgres{Id: a.id},
 		IdentityID:   a.identityID,
 		AppID:        a.appID,
 		Email:        a.email,
 		Username:     a.username,
-		PasswordHash: a.passwordHash,
+		PasswordHash: hash,
 		DisplayName:  a.displayName,
 		Status:       a.status,
 		Source:       a.source,
 		LastLoginAt:  a.lastLoginAt,
 	}
+}
+
+// derefString maps a nullable string to "" (empty password hash = no
+// password set).
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // CanLogin reports whether the account may perform a direct (per-app) login.

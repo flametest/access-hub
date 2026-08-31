@@ -1,22 +1,32 @@
 import {
+  toBackupCodes,
   toInvitationPreview,
   toMe,
+  toMfaChallenge,
   toSignInMethods,
   toTokenPair,
+  toTwoFaEnroll,
+  toTwoFaStatus,
   toWorkspace,
   toWorkspaces,
 } from "@/lib/normalize";
+import { clearSessionCookie, setSessionCookie } from "@/lib/session";
 import { clearSession, getAccessToken, getRefreshToken, setTokens } from "@/lib/tokens";
 import type {
   AcceptInvitationReq,
   InvitationPreview,
+  Login2FaReq,
   LoginReq,
   Me,
+  MfaChallenge,
   RegisterReq,
   ResetPasswordReq,
   SendEmailCodeReq,
   SignInMethod,
   TokenPair,
+  TwoFaDisableReq,
+  TwoFaEnroll,
+  TwoFaStatus,
   UpdateMeReq,
   Workspace,
 } from "@/lib/types";
@@ -79,6 +89,7 @@ const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/invite"];
 /** Clears the session; redirects to /login unless we're already on a public page. */
 function sessionExpired(): void {
   clearSession();
+  clearSessionCookie();
   if (typeof window === "undefined") return;
   const { pathname } = window.location;
   const isPublic = PUBLIC_PATHS.some(
@@ -164,6 +175,8 @@ function refreshTokens(): Promise<boolean> {
         const pair = toTokenPair(await res.json());
         if (!pair) return false;
         setTokens(pair.access_token, pair.refresh_token ?? null);
+        // Keep the browser-flow session cookie in sync with the rotation.
+        setSessionCookie(pair.access_token);
         return true;
       } catch {
         return false;
@@ -218,8 +231,71 @@ export const api = {
   register: (body: RegisterReq): Promise<TokenPair> =>
     request<TokenPair>("/auth/register", { method: "POST", body, auth: false }),
 
-  login: (body: LoginReq): Promise<TokenPair> =>
-    request<TokenPair>("/auth/login", { method: "POST", body, auth: false }),
+  /**
+   * Password login. When the identity has TOTP 2FA enabled the response is a
+   * challenge (`mfa_required` + short-lived `mfa_token`) instead of tokens —
+   * continue with verify2fa.
+   */
+  login: async (body: LoginReq): Promise<TokenPair | MfaChallenge> => {
+    const raw = await request<unknown>("/auth/login", {
+      method: "POST",
+      body,
+      auth: false,
+    });
+    const challenge = toMfaChallenge(raw);
+    if (challenge) return challenge;
+    const pair = toTokenPair(raw);
+    if (!pair) {
+      throw new ApiError(
+        "Signed in, but the server returned no session. Please try again.",
+        500,
+        1500,
+      );
+    }
+    return pair;
+  },
+
+  /** Second login step: TOTP value or a one-time backup code as `code`. */
+  verify2fa: async (body: Login2FaReq): Promise<TokenPair> => {
+    const pair = toTokenPair(
+      await request<unknown>("/auth/login/2fa", {
+        method: "POST",
+        body,
+        auth: false,
+      }),
+    );
+    if (!pair) {
+      throw new ApiError(
+        "Verified, but the server returned no session. Please try again.",
+        500,
+        1500,
+      );
+    }
+    return pair;
+  },
+
+  /** TOTP enrollment state for the signed-in identity. */
+  get2faStatus: async (): Promise<TwoFaStatus> =>
+    toTwoFaStatus(await request<unknown>("/me/2fa/status")),
+
+  /** Issues (or re-issues) the TOTP secret + otpauth URI. */
+  enroll2fa: async (): Promise<TwoFaEnroll> =>
+    toTwoFaEnroll(
+      await request<unknown>("/me/2fa/enroll", { method: "POST" }),
+    ),
+
+  /** Confirms enrollment; returns the plaintext backup codes (shown once). */
+  confirm2fa: async (code: string): Promise<string[]> =>
+    toBackupCodes(
+      await request<unknown>("/me/2fa/confirm", {
+        method: "POST",
+        body: { code },
+      }),
+    ),
+
+  /** Disables 2FA; requires the current password. */
+  disable2fa: (body: TwoFaDisableReq): Promise<void> =>
+    request<void>("/me/2fa/disable", { method: "POST", body }),
 
   sendEmailCode: (body: SendEmailCodeReq): Promise<void> =>
     request<void>("/auth/email/code", { method: "POST", body, auth: false }),

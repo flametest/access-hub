@@ -115,7 +115,7 @@ var policyTableDDLs = []string{
 		app_id TEXT NOT NULL,
 		email TEXT NOT NULL,
 		username TEXT,
-		password_hash TEXT NOT NULL,
+		password_hash TEXT,
 		display_name TEXT,
 		status TEXT NOT NULL DEFAULT 'pending_activation',
 		source TEXT NOT NULL DEFAULT 'invite',
@@ -145,6 +145,22 @@ var policyTableDDLs = []string{
 		granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		expires_at DATETIME,
 		effect TEXT NOT NULL DEFAULT 'allow',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at DATETIME
+	)`,
+	// M4: service clients translated by the loader.
+	`CREATE TABLE oauth_clients (
+		id TEXT PRIMARY KEY,
+		version INTEGER NOT NULL DEFAULT 0,
+		app_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		client_type TEXT NOT NULL DEFAULT 'confidential',
+		secret_hash TEXT,
+		grant_types TEXT NOT NULL DEFAULT '[]',
+		redirect_uris TEXT NOT NULL DEFAULT '[]',
+		scopes TEXT NOT NULL DEFAULT '[]',
+		status TEXT NOT NULL DEFAULT 'active',
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		deleted_at DATETIME

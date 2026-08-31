@@ -17,6 +17,8 @@ type AppRepo interface {
 	// platform apps whose org_id is NULL).
 	List(ctx context.Context, orgID *string) ([]*model.App, error)
 	UpdateFields(ctx context.Context, id string, fields map[string]any) error
+	// Delete soft-deletes the app; zero rows yields NotFoundError.
+	Delete(ctx context.Context, id string) error
 }
 
 type appRepoImpl struct {
@@ -62,5 +64,10 @@ func (r *appRepoImpl) UpdateFields(ctx context.Context, id string, fields map[st
 		return nil
 	}
 	res := r.db.WithContext(ctx).Model(&model.App{}).Where("id = ?", id).Updates(fields)
+	return updateRowsAffected(res, fmt.Sprintf("app %s not found", id))
+}
+
+func (r *appRepoImpl) Delete(ctx context.Context, id string) error {
+	res := r.db.WithContext(ctx).Where("id = ?", id).Delete(&model.App{})
 	return updateRowsAffected(res, fmt.Sprintf("app %s not found", id))
 }

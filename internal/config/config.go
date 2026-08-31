@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	log "github.com/flametest/vita/vlog"
 	"github.com/flametest/vita/vgorm"
+	log "github.com/flametest/vita/vlog"
 	"github.com/flametest/vita/vredis"
 	"github.com/flametest/vita/vserver"
 	"github.com/go-viper/mapstructure/v2"
@@ -41,6 +41,12 @@ type AuthConfig struct {
 	LoginLockDuration    time.Duration `yaml:"loginLockDuration"`
 	AllowAutoRegister    bool          `yaml:"allowAutoRegister"`
 	BcryptCost           int           `yaml:"bcryptCost"`
+	IssuerURL            string        `yaml:"issuerURL"`   // OIDC issuer (defaults to http://localhost:8080)
+	MFATokenTTL          time.Duration `yaml:"mfaTokenTTL"` // 2FA login challenge lifetime (e.g. 5m)
+	// PortalURL is the SPA portal origin. The browser authorization endpoint
+	// (GET /oauth2/authorize) redirects anonymous users to
+	// {PortalURL}/login?next={original authorize URL} (M4 decision).
+	PortalURL string `yaml:"portalURL"`
 }
 
 type MailerConfig struct {
@@ -126,6 +132,15 @@ func (c *Config) validate() error {
 	}
 	if c.Bootstrap.AdminUsername == "" || c.Bootstrap.AdminEmail == "" {
 		return errors.New("bootstrap.adminUsername / bootstrap.adminEmail are required")
+	}
+	if c.Auth.IssuerURL == "" {
+		c.Auth.IssuerURL = "http://localhost:8080"
+	}
+	if c.Auth.MFATokenTTL <= 0 {
+		c.Auth.MFATokenTTL = 5 * time.Minute
+	}
+	if c.Auth.PortalURL == "" {
+		c.Auth.PortalURL = "http://localhost:3000"
 	}
 	return nil
 }

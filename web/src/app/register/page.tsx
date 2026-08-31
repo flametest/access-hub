@@ -9,7 +9,7 @@ import { Card } from "@/components/card";
 import { ErrorAlert } from "@/components/error-alert";
 import { Field } from "@/components/field";
 import { api, errMessage } from "@/lib/api";
-import { setTokens } from "@/lib/tokens";
+import { applySession } from "@/lib/session";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -45,7 +45,7 @@ export default function RegisterPage() {
         nickname: nickname.trim(),
       });
       // Registration auto-logs in: the response carries the token pair.
-      setTokens(tokens.access_token, tokens.refresh_token);
+      applySession(tokens.access_token, tokens.refresh_token);
       router.replace("/workspaces");
     } catch (err) {
       setError(errMessage(err, "We couldn't create your account."));

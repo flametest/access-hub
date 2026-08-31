@@ -210,7 +210,7 @@ func bootstrapAdmin(ctx context.Context, c container.Container, adminApp *model.
 		IdentityID:   user.Id,
 		AppID:        adminApp.Id,
 		Email:        email,
-		PasswordHash: hash,
+		PasswordHash: &hash,
 		DisplayName:  &displayName,
 		Status:       domain.AccountStatusActive,
 		Source:       domain.AccountSourceProvisioned,

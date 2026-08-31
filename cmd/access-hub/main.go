@@ -67,6 +67,12 @@ func main() {
 		panic(err)
 	}
 
+	// Idempotent admin dogfood resource sync (constant table -> admin app
+	// resources + org_admin binding + enforcer reload).
+	if err := api.SyncAdminResources(ctx, c); err != nil {
+		log.Error().Any("error", err).Msg("admin resource sync failed")
+	}
+
 	go func() {
 		_ = srv.Start(ctx)
 	}()

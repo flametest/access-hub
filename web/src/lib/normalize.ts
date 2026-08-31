@@ -1,8 +1,11 @@
 import type {
   InvitationPreview,
   Me,
+  MfaChallenge,
   SignInMethod,
   TokenPair,
+  TwoFaEnroll,
+  TwoFaStatus,
   Workspace,
 } from "@/lib/types";
 
@@ -66,6 +69,7 @@ function pickList(raw: unknown, keys: string[]): unknown[] {
 
 export function toMe(raw: unknown): Me {
   const r = asRecord(raw);
+  const twoFa = r.two_fa_enabled ?? r.twoFaEnabled ?? r.two_fa ?? r.totp_enabled;
   return {
     id: str(r.id, r.user_id, r.userId, r.sub),
     username: str(r.username, r.user_name),
@@ -77,6 +81,7 @@ export function toMe(raw: unknown): Me {
     avatar_url: optStr(r.avatar_url, r.avatar) ?? null,
     status: str(r.status, "unknown"),
     must_change_password: Boolean(r.must_change_password),
+    two_fa_enabled: Boolean(twoFa),
   };
 }
 
@@ -90,6 +95,50 @@ export function toTokenPair(raw: unknown): TokenPair | null {
     refresh_token: typeof refresh === "string" ? refresh : undefined,
     token_type: typeof r.token_type === "string" ? r.token_type : undefined,
   };
+}
+
+/**
+ * Login responses double as 2FA challenges: a truthy `mfa_required` flag plus
+ * a short-lived challenge token means the caller must continue at
+ * POST /auth/login/2fa. Tolerates camelCase and a nested `mfa` object.
+ */
+export function toMfaChallenge(raw: unknown): MfaChallenge | null {
+  const r = asRecord(raw);
+  const nested = asRecord(r.mfa);
+  const required = r.mfa_required ?? r.mfaRequired ?? nested.required;
+  const token = str(
+    r.mfa_token,
+    r.mfaToken,
+    nested.token,
+    nested.mfa_token,
+  );
+  if (!required || !token) return null;
+  return { mfa_required: true, mfa_token: token };
+}
+
+export function toTwoFaStatus(raw: unknown): TwoFaStatus {
+  const r = asRecord(raw);
+  const enabled = Boolean(
+    r.enabled ?? r.two_fa_enabled ?? r.twoFaEnabled ?? r.active,
+  );
+  const confirmedRaw = r.confirmed ?? r.verified ?? r.confirmed_at;
+  return {
+    enabled,
+    confirmed: confirmedRaw === undefined ? enabled : Boolean(confirmedRaw),
+  };
+}
+
+export function toTwoFaEnroll(raw: unknown): TwoFaEnroll {
+  const r = asRecord(raw);
+  return {
+    secret: str(r.secret, r.totp_secret, r.key),
+    otpauth_uri: str(r.otpauth_uri, r.otpauth_url, r.otpauthUri, r.uri, r.url),
+  };
+}
+
+export function toBackupCodes(raw: unknown): string[] {
+  const r = asRecord(raw);
+  return strList(r.backup_codes, r.backupCodes, r.codes, r.recovery_codes);
 }
 
 export function toWorkspace(raw: unknown): Workspace {

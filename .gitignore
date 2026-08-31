@@ -33,3 +33,6 @@ go.work.sum
 .zcode/
 
 docs/
+
+# local RSA signing keys (secrets)
+deploy/keys/

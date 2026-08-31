@@ -6,6 +6,11 @@ const backend = process.env.ACCESS_HUB_API_URL ?? "http://localhost:8080";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Inline the backend origin into the client bundle so the portal can vet
+  // absolute SSO `next` targets against it (see src/lib/session.ts).
+  env: {
+    NEXT_PUBLIC_ACCESS_HUB_API_URL: backend,
+  },
   images: {
     unoptimized: true,
   },

@@ -41,6 +41,9 @@ type Container interface {
 	SessionRepo() repository.SessionRepo
 	InvitationRepo() repository.InvitationRepo
 	AuditLogRepo() repository.AuditLogRepo
+	OAuthClientRepo() repository.OAuthClientRepo
+	OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRepo
+	TOTPSecretRepo() repository.TOTPSecretRepo
 
 	// Close releases the watcher, the Redis client and the database pool.
 	Close()
@@ -69,6 +72,9 @@ type containerImpl struct {
 	sessionRepo      repository.SessionRepo
 	invitationRepo   repository.InvitationRepo
 	auditLogRepo     repository.AuditLogRepo
+	oauthClientRepo  repository.OAuthClientRepo
+	oauthRefreshRepo repository.OAuthRefreshTokenRepo
+	totpSecretRepo   repository.TOTPSecretRepo
 }
 
 // NewContainer builds every dependency, failing fast on the first error
@@ -108,9 +114,12 @@ func NewContainer(cfg *config.Config) (Container, error) {
 	sessionRepo := repository.NewSessionRepo(db)
 	invitationRepo := repository.NewInvitationRepo(db)
 	auditLogRepo := repository.NewAuditLogRepo(db)
+	oauthClientRepo := repository.NewOAuthClientRepo(db)
+	oauthRefreshRepo := repository.NewOAuthRefreshTokenRepo(db)
+	totpSecretRepo := repository.NewTOTPSecretRepo(db)
 
 	// Casbin enforcer over the read-only policy loader.
-	loader := casbinx.NewLoader(roleRepo, roleResourceRepo, accountRoleRepo, accountGrantRepo)
+	loader := casbinx.NewLoader(roleRepo, roleResourceRepo, accountRoleRepo, accountGrantRepo, oauthClientRepo, appRepo)
 	enf, err := casbinx.NewEnforcer(loader)
 	if err != nil {
 		release(db, redisClient, nil)
@@ -149,6 +158,9 @@ func NewContainer(cfg *config.Config) (Container, error) {
 		sessionRepo:      sessionRepo,
 		invitationRepo:   invitationRepo,
 		auditLogRepo:     auditLogRepo,
+		oauthClientRepo:  oauthClientRepo,
+		oauthRefreshRepo: oauthRefreshRepo,
+		totpSecretRepo:   totpSecretRepo,
 	}, nil
 }
 
@@ -172,6 +184,11 @@ func (c *containerImpl) AccountGrantRepo() repository.AccountGrantRepo { return 
 func (c *containerImpl) SessionRepo() repository.SessionRepo           { return c.sessionRepo }
 func (c *containerImpl) InvitationRepo() repository.InvitationRepo     { return c.invitationRepo }
 func (c *containerImpl) AuditLogRepo() repository.AuditLogRepo         { return c.auditLogRepo }
+func (c *containerImpl) OAuthClientRepo() repository.OAuthClientRepo   { return c.oauthClientRepo }
+func (c *containerImpl) OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRepo {
+	return c.oauthRefreshRepo
+}
+func (c *containerImpl) TOTPSecretRepo() repository.TOTPSecretRepo { return c.totpSecretRepo }
 
 // Close releases the watcher (stops pub/sub), the Redis client and the
 // database pool. Safe to call on a partially-initialized container.

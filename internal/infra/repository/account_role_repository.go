@@ -43,6 +43,9 @@ type AccountRoleRepo interface {
 	// SetForAccount atomically replaces the account's role set with roleIDs
 	// (soft-delete all, then insert), attributed to grantedBy.
 	SetForAccount(ctx context.Context, accountID string, roleIDs []string, grantedBy string) error
+	// ListByRole returns the (account, role) bindings of one role (used to
+	// clean up in-memory policies when a role is deleted).
+	ListByRole(ctx context.Context, roleID string) ([]*model.AccountRole, error)
 	// ListPolicyRows returns the full account_roles join used by the Casbin
 	// loader. Rows referencing soft-deleted/disabled accounts, roles or apps
 	// are excluded by the query itself.
@@ -90,6 +93,15 @@ func (r *accountRoleRepoImpl) ListByAccount(ctx context.Context, accountID strin
 		Where("account_roles.account_id = ? AND account_roles.deleted_at IS NULL", accountID).
 		Order("account_roles.created_at ASC").
 		Scan(&out).Error
+	return out, err
+}
+
+// ListByRole returns the bindings of one role.
+func (r *accountRoleRepoImpl) ListByRole(ctx context.Context, roleID string) ([]*model.AccountRole, error) {
+	var out []*model.AccountRole
+	err := r.db.WithContext(ctx).
+		Where("role_id = ?", roleID).
+		Find(&out).Error
 	return out, err
 }
 

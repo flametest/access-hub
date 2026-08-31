@@ -15,7 +15,7 @@ import { useHasToken } from "@/hooks/use-require-auth";
 import { api, errMessage } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { toTokenPair } from "@/lib/normalize";
-import { setTokens } from "@/lib/tokens";
+import { applySession } from "@/lib/session";
 import type { AcceptInvitationReq, InvitationPreview } from "@/lib/types";
 
 type Step = "code" | "confirm" | "done";
@@ -84,7 +84,7 @@ export default function InvitePage() {
       // Anonymous auto-provision flow may log us in directly.
       const tokens = toTokenPair(resp);
       if (tokens) {
-        setTokens(tokens.access_token, tokens.refresh_token);
+        applySession(tokens.access_token, tokens.refresh_token);
         setAutoSignedIn(true);
       }
       setStep("done");

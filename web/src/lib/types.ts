@@ -51,6 +51,40 @@ export interface AcceptInvitationReq {
   new_password?: string;
 }
 
+/**
+ * POST /auth/login and POST /auth/email/login answer with this instead of a
+ * token pair when the identity has TOTP 2FA enabled (design.md §12 M4).
+ */
+export interface MfaChallenge {
+  mfa_required: true;
+  /** Short-lived (5 min) JWT authorizing exactly one /auth/login/2fa call. */
+  mfa_token: string;
+}
+
+/** POST /auth/login/2fa — `code` accepts a TOTP value or a backup code. */
+export interface Login2FaReq {
+  mfa_token: string;
+  code: string;
+}
+
+/** GET /me/2fa/status. */
+export interface TwoFaStatus {
+  enabled: boolean;
+  /** False while enrollment is in progress (secret issued but unconfirmed). */
+  confirmed: boolean;
+}
+
+/** POST /me/2fa/enroll — issues (or re-issues) the TOTP secret. */
+export interface TwoFaEnroll {
+  secret: string;
+  otpauth_uri: string;
+}
+
+/** POST /me/2fa/disable. */
+export interface TwoFaDisableReq {
+  password: string;
+}
+
 /** Primary identity (users table) — GET /me. */
 export interface Me {
   id: string;
@@ -60,6 +94,8 @@ export interface Me {
   avatar_url?: string | null;
   status: string;
   must_change_password: boolean;
+  /** TOTP two-factor authentication is enabled (and confirmed). */
+  two_fa_enabled: boolean;
 }
 
 /** Workspace account row — GET /me/workspaces and GET /me/workspaces/{id}. */

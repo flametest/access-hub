@@ -11,6 +11,7 @@ import { Initials } from "@/components/initials";
 import { EmptyCard, ErrorCard, SkeletonCard } from "@/components/page-state";
 import { PortalShell } from "@/components/portal-shell";
 import { useMe } from "@/hooks/use-me";
+import { use2faStatus } from "@/hooks/use-2fa-status";
 import { useRequireAuth } from "@/hooks/use-require-auth";
 import { api, errMessage } from "@/lib/api";
 import type { Workspace } from "@/lib/types";
@@ -45,6 +46,12 @@ export default function IdentityPage() {
   const meQuery = useMe(authed);
   const me = meQuery.data;
 
+  const twoFaQuery = use2faStatus(authed);
+  const status = twoFaQuery.data;
+  // GET /me/2fa/status is authoritative; GET /me's two_fa_enabled is the fallback.
+  const twoFaEnabled = status ? status.enabled : (me?.two_fa_enabled ?? false);
+  const twoFaResolved = Boolean(status) || Boolean(me);
+
   const workspacesQuery = useQuery({
     queryKey: ["workspaces"],
     queryFn: () => api.listWorkspaces(),
@@ -63,7 +70,8 @@ export default function IdentityPage() {
         />
       )}
       {me && (
-        <Card className="flex flex-wrap items-center gap-5 p-5 sm:p-6">
+        <>
+          <Card className="flex flex-wrap items-center gap-5 p-5 sm:p-6">
           <Initials name={me.nickname || me.email || "?"} size="xl" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2.5">
@@ -74,11 +82,53 @@ export default function IdentityPage() {
             </div>
             <p className="mt-1 truncate text-sm text-white/55">{me.email}</p>
           </div>
-          {/* TODO(M4): 2FA enrollment per design.md §12. */}
-          <Chip tone="neutral">
-            <Icon name="shield" className="size-3.5" /> 2FA · coming soon
-          </Chip>
+          {twoFaResolved ? (
+            twoFaEnabled ? (
+              <Chip tone="success">
+                <Icon name="shield" className="size-3.5" /> 2FA enabled
+              </Chip>
+            ) : (
+              <Chip tone="neutral">
+                <Icon name="shield" className="size-3.5" /> 2FA off
+              </Chip>
+            )
+          ) : (
+            <Chip tone="neutral">
+              <Icon name="shield" className="size-3.5" /> 2FA
+            </Chip>
+          )}
         </Card>
+
+        {/* Two-factor authentication */}
+        {twoFaResolved && (
+          <Card className="mt-4 flex flex-wrap items-center gap-4 p-5 sm:p-6">
+            <span
+              className={`grid size-11 flex-none place-items-center rounded-xl ${
+                twoFaEnabled
+                  ? "bg-[#22C55E]/15 text-[#7CE49F]"
+                  : "bg-ah-accent/15 text-ah-accent"
+              }`}
+            >
+              <Icon name="shield" className="size-5.5" />
+            </span>
+            <div className="min-w-0 flex-1 basis-56">
+              <h2 className="font-bold">Two-factor authentication</h2>
+              <p className="mt-0.5 text-[13px] text-white/55">
+                {twoFaEnabled
+                  ? "Portal sign-ins require a one-time code from your authenticator app."
+                  : "Add a one-time code on top of your password so a leaked password can't sign in as you."}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant={twoFaEnabled ? "secondary" : "primary"}
+              onClick={() => router.push("/identity/2fa")}
+            >
+              {twoFaEnabled ? "Manage" : "Enable"}
+            </Button>
+          </Card>
+        )}
+        </>
       )}
 
       {/* Linked accounts */}

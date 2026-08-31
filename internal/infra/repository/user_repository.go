@@ -22,6 +22,10 @@ type UserRepo interface {
 	FindByUsernameOrEmail(ctx context.Context, identifier string) (*model.User, error)
 	UpdateFields(ctx context.Context, id string, fields map[string]any) error
 	TouchLastLogin(ctx context.Context, id string, at time.Time) error
+	// Search lists identities for the admin console: q (optional) matches
+	// username/email substring (lower-normalized), offset pagination with the
+	// total count of the filtered set.
+	Search(ctx context.Context, q string, limit, offset int) ([]*model.User, int64, error)
 }
 
 type userRepoImpl struct {
@@ -82,4 +86,25 @@ func (r *userRepoImpl) UpdateFields(ctx context.Context, id string, fields map[s
 
 func (r *userRepoImpl) TouchLastLogin(ctx context.Context, id string, at time.Time) error {
 	return r.UpdateFields(ctx, id, map[string]any{"last_login_at": at})
+}
+
+func (r *userRepoImpl) Search(ctx context.Context, q string, limit, offset int) ([]*model.User, int64, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	query := r.db.WithContext(ctx).Model(&model.User{})
+	if trimmed := strings.TrimSpace(q); trimmed != "" {
+		pattern := "%" + strings.ToLower(trimmed) + "%"
+		query = query.Where("LOWER(username) LIKE ? OR LOWER(email) LIKE ?", pattern, pattern)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var out []*model.User
+	err := query.Order("created_at ASC").Limit(limit).Offset(offset).Find(&out).Error
+	return out, total, err
 }

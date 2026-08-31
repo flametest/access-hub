@@ -103,6 +103,13 @@ const PATHS = {
       <path d="M19.5 4.5v3.6h-3.6" />
     </>
   ),
+  download: (
+    <>
+      <path d="M12 4v10.5" />
+      <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+      <path d="M5 19.5h14" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof PATHS;

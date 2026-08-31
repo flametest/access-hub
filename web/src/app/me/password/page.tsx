@@ -10,7 +10,7 @@ import { Icon } from "@/components/icon";
 import { PortalShell } from "@/components/portal-shell";
 import { useToast } from "@/components/toast";
 import { api, errMessage } from "@/lib/api";
-import { clearSession } from "@/lib/tokens";
+import { endSession } from "@/lib/session";
 
 /**
  * Change the primary identity password. Per design.md §7/§8 this goes through
@@ -53,7 +53,7 @@ export default function ChangePasswordPage() {
       await api.updateMe({ password: next, current_password: current });
       toast("Password changed.", "success");
       // Password change revokes all identity sessions — force a fresh sign-in.
-      clearSession();
+      endSession();
       setDone(true);
       window.setTimeout(() => {
         router.replace("/login");

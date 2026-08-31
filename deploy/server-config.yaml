@@ -7,7 +7,7 @@ LogLevel: 0
 Datasource:
   dialect: postgres
   host: 127.0.0.1
-  port: 5432
+  port: 5433
   username: accesshub
   password: accesshub
   database: accesshub
@@ -29,6 +29,9 @@ Auth:
   loginLockDuration: 15m
   allowAutoRegister: false
   bcryptCost: 12
+  issuerURL: http://localhost:8080
+  mfaTokenTTL: 5m
+  portalURL: http://localhost:3000
 Mailer:
   driver: console
   smtp:

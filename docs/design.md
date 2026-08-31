@@ -2,7 +2,8 @@
 
 通用用户中心 + 多应用权限管理系统（IAM），**多租户（org）+ 主账号/子账号两层身份**。
 
-> **状态：v6（讨论中，核心闭环 M1–M3 待实施）**
+> **状态：v6（M1–M3 核心闭环已实现，M4–M6 待实施）**
+> 实施落点（2026-08-30）：后端 M1–M3 全部落地并通过全量测试（含一条 sqlite httptest 全链路集成测试）与真机冒烟（docker pg/redis + `scripts/smoke.sh`）；门户前端 `web/` 按 §9 映射实现（Next.js 16 + React 19 + Tailwind 4，构建通过）。实施期补充的契约细节：① `PATCH /me` 改密需 `current_password` 验证 ② `POST /invitations/accept` 在自动创建主账号时返回 tokens 供前端自动登录 ③ admin 资源码税表：平台码 `admin:org:* / admin:user:* / admin:audit:*` 仅 super_admin，其余（`admin:app:* / admin:account:* / admin:invitation:* / admin:resource:* / admin:role:* / admin:grant:*`）org_admin 自动绑定 ④ dev 环境宿主机 5432 被占用，compose 将 PG 映射到 **5433**（server-config.yaml 已对应）。
 > v6 修订要点（用户决策）：**子账号保留独立密码，主账号缺位时自动创建**：① 恢复子账号独立登录凭证与 `/auth/account-login` 直登 ② 绑定约束不变——子账号创建（邀请接受/管理员指派）时无主账号则**自动创建主账号**并绑定 ③ 邀请接受无需预注册：当场所设密码同时初始化主账号与子账号（出生同值，此后独立）；管理员指派则双方各凭邮件激活设密 ④ 关联（link/unlink）流程废弃，交接走管理员 transfer。
 > v6 补充：密码存储采用 **bcrypt 内建加盐**——每密码随机 128-bit 盐已内嵌于哈希串，**拒绝手动 `password+salt` 预拼接**（冗余且触发 bcrypt 72 字节截断风险），见 §7；可选 pepper 增强。
 > v5 存档：子账号强制挂主账号（绑定约束沿用；"登录凭证统一在主账号"已被 v6 推翻）。
@@ -215,6 +216,10 @@ access-hub/
 
 ## 12. 后续里程碑
 
-- **M4 OAuth2/OIDC Provider + 2FA**：authorize（code+PKCE）、token（authorization_code/refresh_token/client_credentials 服务身份）、userinfo、JWKS、discovery；TOTP（enroll/verify/备份码），兑现前端"Secured with 2FA"承诺
+- **M4 OAuth2/OIDC Provider + 2FA（实施中，2026-08-31 决策定稿）**：
+  - **选型（已定）**：go-oauth2/v4 做协议引擎（authorize/token/PKCE/client_credentials）+ 自建 OIDC 层（discovery / id_token 复用 jwt.Manager RS256 / userinfo / at_hash、nonce）；zitadel/oidc 因 Storage 接口面过大且需适配其 AuthRequest 状态机而放弃
+  - **2FA 策略（已定）**：可选增强。TOTP enroll/confirm/backup codes/disable；开启后 identity（门户）登录多一步挑战（`mfa_required + mfa_token` 短时 JWT 5min → `/auth/login/2fa`）；account 直登不加挑战；backup codes sha256 落库、一次性
+  - **账号解析（已定）**：OIDC 首次登录自动开通子账号（password_hash 可空、不可直登、可邮件激活），authorize 亦可显式传 account_id（工作台选择语义）；migration 0002 已放开 accounts.password_hash
+  - 端点：`POST /api/v1/oauth/authorize`（SPA JSON 版，center token）+ `GET /oauth2/authorize`（标准重定向版，cookie/bearer，无会话 302 到门户登录）；`POST /oauth2/token`（authorization_code+PKCE / refresh_token 轮换重用吊销 / client_credentials）；`GET /oauth2/userinfo`；`GET /.well-known/openid-configuration`（issuer 来自 auth.issuerURL）；管理端 `/admin/apps/{key}/oauth-clients`（新码 `admin:oauthclient:read|manage`，非平台码→org_admin 自动绑定）；service 客户端默认自有 app 全量策略（loader: `p, client:{key}, app:{key}, *, *`），可后续收紧
 - **M5 社交登录**：Google/Microsoft/Facebook（x/oauth2）、Apple（ES256 + form_post）；identities 表；verified email 自动合并；社交登录后按邮箱匹配待接受邀请/同名子账号的提示流程（对应原型 Discover 屏的落地形态）；org 邀请链接直达
 - **M6 自定义规则**：custom_rules（expr-lang ABAC）挂 matcher；effect=deny + priority；审计报表 + 管理后台 UI（React+AntD，工作台选择器按 §9 映射）

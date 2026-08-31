@@ -32,6 +32,16 @@ const (
 
 	SubjectPrefixUser    = "user:"
 	SubjectPrefixAccount = "account:"
+	SubjectPrefixClient  = "client:"
+)
+
+// Token type markers (Claims.Typ). "" is the classic access token issued by
+// M1-M3 flows; "mfa" marks the short-lived 2FA login challenge; "client"
+// marks an OAuth2 client_credentials service token.
+const (
+	TypeAccess = ""
+	TypeMFA    = "mfa"
+	TypeClient = "client"
 )
 
 // Claims are access-hub access-token claims. aud serializes as a plain JSON
@@ -43,6 +53,7 @@ type Claims struct {
 	Aid      string `json:"aid,omitempty"`      // account id (account tokens)
 	Username string `json:"username,omitempty"` // identity username
 	Email    string `json:"email,omitempty"`    // identity email
+	Typ      string `json:"typ,omitempty"`      // token type marker (see Type* constants)
 }
 
 // NewIdentityClaims builds claims for a portal (center) token.
@@ -54,6 +65,22 @@ func NewIdentityClaims(identityID, sessionID, username, email string, ttl time.D
 // the audience so business apps can verify locally via JWKS.
 func NewAccountClaims(accountID, identityID, appKey, sessionID, username, email string, ttl time.Duration) *Claims {
 	return newClaims(SubjectPrefixAccount+accountID, appKey, accountID, identityID, sessionID, username, email, ttl)
+}
+
+// NewMFAClaims builds the short-lived 2FA login challenge token
+// (sub = user:{id}, aud = access-hub, typ = "mfa").
+func NewMFAClaims(identityID string, ttl time.Duration) *Claims {
+	c := newClaims(SubjectPrefixUser+identityID, AudienceCentral, "", identityID, "", "", "", ttl)
+	c.Typ = TypeMFA
+	return c
+}
+
+// NewClientClaims builds claims for an OAuth2 client_credentials service
+// token (sub = client:{clientID}, aud = the client's app key, no session).
+func NewClientClaims(clientID, appKey string, ttl time.Duration) *Claims {
+	c := newClaims(SubjectPrefixClient+clientID, appKey, "", "", "", "", "", ttl)
+	c.Typ = TypeClient
+	return c
 }
 
 func newClaims(subject, aud, aid, iid, sessionID, username, email string, ttl time.Duration) *Claims {
@@ -86,6 +113,42 @@ func (c *Claims) Aud() string {
 // IsAccountToken reports whether the claims describe a workspace app token.
 func (c *Claims) IsAccountToken() bool {
 	return c.Aid != ""
+}
+
+// IsMFAToken reports whether the claims describe a 2FA login challenge.
+func (c *Claims) IsMFAToken() bool { return c.Typ == TypeMFA }
+
+// IsClientToken reports whether the claims describe a client_credentials
+// service token.
+func (c *Claims) IsClientToken() bool { return c.Typ == TypeClient }
+
+// IDTokenClaims are the OIDC ID-token claims (design.md §12 M4). They share
+// the RS256 key with access tokens but are a separate type so the access
+// token claim shape stays backward compatible.
+type IDTokenClaims struct {
+	jwt.RegisteredClaims
+	Nonce  string `json:"nonce,omitempty"`   // authorization-request nonce
+	AtHash string `json:"at_hash,omitempty"` // left half of SHA-256(access token), base64url
+	Sid    string `json:"sid,omitempty"`     // optional session binding
+}
+
+// NewIDTokenClaims builds ID-token claims. iss must be the OIDC issuer URL
+// from the discovery document (NOT the static access-hub iss constant).
+func NewIDTokenClaims(issuer, subject, audience, nonce, atHash, sessionID string, ttl time.Duration) *IDTokenClaims {
+	now := time.Now()
+	return &IDTokenClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    issuer,
+			Subject:   subject,
+			Audience:  jwt.ClaimStrings{audience},
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ID:        uuid.NewString(),
+		},
+		Nonce:  nonce,
+		AtHash: atHash,
+		Sid:    sessionID,
+	}
 }
 
 // Manager signs and verifies RS256 tokens and serves the JWKS document.
@@ -155,6 +218,19 @@ func (m *Manager) Issue(claims *Claims) (string, error) {
 	signed, err := token.SignedString(m.privateKey)
 	if err != nil {
 		return "", verrors.InternalServerError(fmt.Sprintf("sign token: %v", err))
+	}
+	return signed, nil
+}
+
+// IssueIDToken signs OIDC ID-token claims with the same RS256 key.
+func (m *Manager) IssueIDToken(claims *IDTokenClaims) (string, error) {
+	if claims == nil {
+		return "", verrors.BadRequestError("claims is nil")
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signed, err := token.SignedString(m.privateKey)
+	if err != nil {
+		return "", verrors.InternalServerError(fmt.Sprintf("sign id_token: %v", err))
 	}
 	return signed, nil
 }

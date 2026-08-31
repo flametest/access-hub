@@ -117,6 +117,7 @@ func newFixture(t *testing.T) *fixture {
 // seedAccount inserts an active user + account pair for the app.
 func (f *fixture) seedAccount(t *testing.T, app *model.App, status string, username string) *model.Account {
 	t.Helper()
+	hashX := "x"
 	user := &model.User{
 		BasePostgres:  vgorm.BasePostgres{Id: uuid.NewString()},
 		Username:      username,
@@ -130,7 +131,7 @@ func (f *fixture) seedAccount(t *testing.T, app *model.App, status string, usern
 		IdentityID:   user.Id,
 		AppID:        app.Id,
 		Email:        username + "@example.com",
-		PasswordHash: "x",
+		PasswordHash: &hashX,
 		Status:       status,
 		Source:       "invite",
 	}
@@ -146,6 +147,8 @@ func (f *fixture) newEnforcer(t *testing.T) *Enforcer {
 		repository.NewRoleResourceRepo(f.db),
 		repository.NewAccountRoleRepo(f.db),
 		repository.NewAccountGrantRepo(f.db),
+		repository.NewOAuthClientRepo(f.db),
+		repository.NewAppRepo(f.db),
 	)
 	en, err := NewEnforcer(loader)
 	if err != nil {
@@ -338,6 +341,8 @@ func TestLoaderRejectsWrites(t *testing.T) {
 		repository.NewRoleResourceRepo(f.db),
 		repository.NewAccountRoleRepo(f.db),
 		repository.NewAccountGrantRepo(f.db),
+		repository.NewOAuthClientRepo(f.db),
+		repository.NewAppRepo(f.db),
 	)
 	if err := loader.SavePolicy(nil); err == nil {
 		t.Fatal("SavePolicy must be rejected")

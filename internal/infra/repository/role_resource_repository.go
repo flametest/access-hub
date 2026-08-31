@@ -11,11 +11,13 @@ import (
 // fields of its resource (aliased to avoid column-name collisions between the
 // two tables).
 type RoleResourceWithResource struct {
-	RoleResource   model.RoleResource
-	ResourceCode   string `gorm:"column:resource_code"`
-	ResourceName   string `gorm:"column:resource_name"`
-	ResourceType   string `gorm:"column:resource_type"`
-	ResourceStatus string `gorm:"column:resource_status"`
+	// embedded: the query selects role_resources.* flat, so GORM must scan
+	// these columns inline instead of treating the struct as an association.
+	RoleResource   model.RoleResource `gorm:"embedded"`
+	ResourceCode   string             `gorm:"column:resource_code"`
+	ResourceName   string             `gorm:"column:resource_name"`
+	ResourceType   string             `gorm:"column:resource_type"`
+	ResourceStatus string             `gorm:"column:resource_status"`
 }
 
 // RoleResourceRepo manages the role -> resource attachment table.
@@ -27,6 +29,9 @@ type RoleResourceRepo interface {
 	// ListByRoleWithResources returns the role's attachments joined with their
 	// resource rows.
 	ListByRoleWithResources(ctx context.Context, roleID string) ([]RoleResourceWithResource, error)
+	// ListByResource returns the attachments pointing at one resource (used
+	// to clean up in-memory policies when a resource is deleted/disabled).
+	ListByResource(ctx context.Context, resourceID string) ([]*model.RoleResource, error)
 	// ListPolicyRows returns the full role_resources join used by the Casbin
 	// loader. Rows referencing soft-deleted/disabled roles, resources or apps
 	// are excluded by the query itself.
@@ -101,5 +106,14 @@ func (r *roleResourceRepoImpl) ListPolicyRows(ctx context.Context) ([]PolicyRole
 		Joins("JOIN apps ON apps.id = resources.app_id AND apps.deleted_at IS NULL AND apps.status = 'active'").
 		Where("role_resources.deleted_at IS NULL").
 		Scan(&out).Error
+	return out, err
+}
+
+// ListByResource returns the attachments of one resource.
+func (r *roleResourceRepoImpl) ListByResource(ctx context.Context, resourceID string) ([]*model.RoleResource, error) {
+	var out []*model.RoleResource
+	err := r.db.WithContext(ctx).
+		Where("resource_id = ?", resourceID).
+		Find(&out).Error
 	return out, err
 }
