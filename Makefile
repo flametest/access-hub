@@ -47,3 +47,6 @@ smoke: ## end-to-end smoke against a running server on :8080
 
 smoke-m4: ## M4 smoke (2FA + OIDC) against a running server; restores admin 2FA state
 	@python3 scripts/m4_smoke.py
+
+smoke-m6: ## M6 smoke (priority ladder / deny / ABAC / audit summary) against a running server
+	@python3 scripts/m6_smoke.py

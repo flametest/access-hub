@@ -20,11 +20,18 @@ type RoleResourceWithResource struct {
 	ResourceStatus string             `gorm:"column:resource_status"`
 }
 
+// RoleResourceItem is one (resource, effect) attachment to persist: effect
+// is allow|deny (M6 deny enablement; "" defaults to allow).
+type RoleResourceItem struct {
+	ResourceID string
+	Effect     string
+}
+
 // RoleResourceRepo manages the role -> resource attachment table.
 type RoleResourceRepo interface {
 	// ReplaceForRole atomically re-grants a role's resource set: soft-deletes
-	// the role's existing rows, then inserts resourceIDs.
-	ReplaceForRole(ctx context.Context, roleID string, resourceIDs []string) error
+	// the role's existing rows, then inserts items.
+	ReplaceForRole(ctx context.Context, roleID string, items []RoleResourceItem) error
 	ListByRole(ctx context.Context, roleID string) ([]*model.RoleResource, error)
 	// ListByRoleWithResources returns the role's attachments joined with their
 	// resource rows.
@@ -47,23 +54,28 @@ func NewRoleResourceRepo(db *gorm.DB) RoleResourceRepo {
 }
 
 // ReplaceForRole runs delete-then-insert in one transaction. Input resource
-// ids are deduplicated to respect the (role_id, resource_id) unique index.
-func (r *roleResourceRepoImpl) ReplaceForRole(ctx context.Context, roleID string, resourceIDs []string) error {
+// ids are deduplicated to respect the (role_id, resource_id) unique index
+// (the first occurrence of an id wins, including its effect).
+func (r *roleResourceRepoImpl) ReplaceForRole(ctx context.Context, roleID string, items []RoleResourceItem) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("role_id = ?", roleID).Delete(&model.RoleResource{}).Error; err != nil {
 			return err
 		}
-		if len(resourceIDs) == 0 {
+		if len(items) == 0 {
 			return nil
 		}
-		seen := make(map[string]struct{}, len(resourceIDs))
-		rows := make([]model.RoleResource, 0, len(resourceIDs))
-		for _, resID := range resourceIDs {
-			if _, dup := seen[resID]; dup {
+		seen := make(map[string]struct{}, len(items))
+		rows := make([]model.RoleResource, 0, len(items))
+		for _, item := range items {
+			if _, dup := seen[item.ResourceID]; dup {
 				continue
 			}
-			seen[resID] = struct{}{}
-			rows = append(rows, model.RoleResource{RoleID: roleID, ResourceID: resID, Effect: grantEffectAllow})
+			seen[item.ResourceID] = struct{}{}
+			effect := item.Effect
+			if effect != "allow" && effect != "deny" {
+				effect = grantEffectAllow
+			}
+			rows = append(rows, model.RoleResource{RoleID: roleID, ResourceID: item.ResourceID, Effect: effect})
 		}
 		return tx.Create(&rows).Error
 	})
@@ -100,7 +112,7 @@ func (r *roleResourceRepoImpl) ListPolicyRows(ctx context.Context) ([]PolicyRole
 		Table("role_resources").
 		Select("role_resources.id, roles.id AS role_id, roles.code AS role_code, roles.scope AS role_scope, " +
 			"roles.built_in AS role_built_in, roles.app_id AS role_app_id, resources.code AS resource_code, " +
-			"resources.app_id AS resource_app_id, apps.key AS resource_app_key").
+			"resources.app_id AS resource_app_id, apps.key AS resource_app_key, role_resources.effect").
 		Joins("JOIN roles ON roles.id = role_resources.role_id AND roles.deleted_at IS NULL").
 		Joins("JOIN resources ON resources.id = role_resources.resource_id AND resources.deleted_at IS NULL AND resources.status = 'active'").
 		Joins("JOIN apps ON apps.id = resources.app_id AND apps.deleted_at IS NULL AND apps.status = 'active'").

@@ -584,6 +584,98 @@ func (h *Handlers) AdminListAuditLogs(c echo.Context) error {
 	return okJSON(c, http.StatusOK, resp)
 }
 
+// AdminAuditSummary handles GET /api/v1/admin/audit-logs/summary?days=7 (M6).
+func (h *Handlers) AdminAuditSummary(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	resp, err := h.AdminAudit.Summary(c.Request().Context(), actor, intQuery(c, "days", 7))
+	if err != nil {
+		return err
+	}
+	return okJSON(c, http.StatusOK, resp)
+}
+
+// ---------- custom rules (M6) ----------
+
+// AdminListCustomRules handles GET /api/v1/admin/apps/{appKey}/custom-rules.
+func (h *Handlers) AdminListCustomRules(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	items, err := h.AdminCustomRule.List(c.Request().Context(), actor, c.Param("appKey"))
+	if err != nil {
+		return err
+	}
+	return okJSON(c, http.StatusOK, items)
+}
+
+// AdminCreateCustomRule handles POST /api/v1/admin/apps/{appKey}/custom-rules.
+func (h *Handlers) AdminCreateCustomRule(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	req := &dto.CreateCustomRuleReq{}
+	if err := bindBody(c, req); err != nil {
+		return err
+	}
+	item, err := h.AdminCustomRule.Create(c.Request().Context(), actor, c.Param("appKey"), req)
+	if err != nil {
+		return err
+	}
+	return okJSON(c, http.StatusCreated, item)
+}
+
+// AdminUpdateCustomRule handles PATCH .../custom-rules/{ruleId}.
+func (h *Handlers) AdminUpdateCustomRule(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	req := &dto.UpdateCustomRuleReq{}
+	if err := bindBody(c, req); err != nil {
+		return err
+	}
+	item, err := h.AdminCustomRule.Update(c.Request().Context(), actor, c.Param("appKey"), c.Param("ruleId"), req)
+	if err != nil {
+		return err
+	}
+	return okJSON(c, http.StatusOK, item)
+}
+
+// AdminDeleteCustomRule handles DELETE .../custom-rules/{ruleId}.
+func (h *Handlers) AdminDeleteCustomRule(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	if err := h.AdminCustomRule.Delete(c.Request().Context(), actor, c.Param("appKey"), c.Param("ruleId")); err != nil {
+		return err
+	}
+	return noContent(c)
+}
+
+// AdminTestCustomRule handles POST .../custom-rules/test (dry-run, nothing
+// persisted).
+func (h *Handlers) AdminTestCustomRule(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	req := &dto.TestCustomRuleReq{}
+	if err := bindBody(c, req); err != nil {
+		return err
+	}
+	resp, err := h.AdminCustomRule.Test(c.Request().Context(), actor, c.Param("appKey"), req)
+	if err != nil {
+		return err
+	}
+	return okJSON(c, http.StatusOK, resp)
+}
+
 // intQuery reads an int query parameter with a default.
 func intQuery(c echo.Context, name string, def int) int {
 	raw := c.QueryParam(name)

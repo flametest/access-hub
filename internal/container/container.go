@@ -46,6 +46,7 @@ type Container interface {
 	OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRepo
 	TOTPSecretRepo() repository.TOTPSecretRepo
 	IdentityRepo() repository.IdentityRepo
+	CustomRuleRepo() repository.CustomRuleRepo
 
 	// SocialRegistry returns the configured social login providers keyed by
 	// provider id (disabled providers report Enabled()==false, design.md §12 M5).
@@ -82,6 +83,7 @@ type containerImpl struct {
 	oauthRefreshRepo repository.OAuthRefreshTokenRepo
 	totpSecretRepo   repository.TOTPSecretRepo
 	identityRepo     repository.IdentityRepo
+	customRuleRepo   repository.CustomRuleRepo
 	social           map[string]social.Provider
 }
 
@@ -126,13 +128,14 @@ func NewContainer(cfg *config.Config) (Container, error) {
 	oauthRefreshRepo := repository.NewOAuthRefreshTokenRepo(db)
 	totpSecretRepo := repository.NewTOTPSecretRepo(db)
 	identityRepo := repository.NewIdentityRepo(db)
+	customRuleRepo := repository.NewCustomRuleRepo(db)
 
 	// Social login providers built from the global yaml credentials
 	// (providers without credentials report Enabled()==false).
 	socialProviders := social.NewRegistry(cfg.Social)
 
 	// Casbin enforcer over the read-only policy loader.
-	loader := casbinx.NewLoader(roleRepo, roleResourceRepo, accountRoleRepo, accountGrantRepo, oauthClientRepo, appRepo)
+	loader := casbinx.NewLoader(roleRepo, roleResourceRepo, accountRoleRepo, accountGrantRepo, oauthClientRepo, customRuleRepo, appRepo)
 	enf, err := casbinx.NewEnforcer(loader)
 	if err != nil {
 		release(db, redisClient, nil)
@@ -175,6 +178,7 @@ func NewContainer(cfg *config.Config) (Container, error) {
 		oauthRefreshRepo: oauthRefreshRepo,
 		totpSecretRepo:   totpSecretRepo,
 		identityRepo:     identityRepo,
+		customRuleRepo:   customRuleRepo,
 		social:           socialProviders,
 	}, nil
 }
@@ -205,6 +209,7 @@ func (c *containerImpl) OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRepo
 }
 func (c *containerImpl) TOTPSecretRepo() repository.TOTPSecretRepo { return c.totpSecretRepo }
 func (c *containerImpl) IdentityRepo() repository.IdentityRepo     { return c.identityRepo }
+func (c *containerImpl) CustomRuleRepo() repository.CustomRuleRepo { return c.customRuleRepo }
 func (c *containerImpl) SocialRegistry() map[string]social.Provider {
 	return c.social
 }

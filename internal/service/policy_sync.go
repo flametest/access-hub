@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/flametest/access-hub/internal/container"
@@ -13,7 +14,8 @@ import (
 
 // Policy-consistency helpers: every RBAC mutation writes the business tables
 // (source of truth) AND applies the equivalent incremental in-memory casbin
-// update, bumps `policy:ver:{appKey}` and broadcasts a reload.
+// update (7-tuple rules with the priority ladder + explicit effect), bumps
+// `policy:ver:{appKey}` and broadcasts a reload.
 
 // casbinSubjectAccount builds the casbin subject for an account.
 func casbinSubjectAccount(accountID string) string { return "account:" + accountID }
@@ -26,6 +28,15 @@ func casbinRole(roleCode string) string { return "role:" + roleCode }
 
 // casbinDomApp builds the domain value for an app key.
 func casbinDomApp(appKey string) string { return "app:" + appKey }
+
+// casbinEffect normalizes an effect value, defaulting unknown values to
+// allow (mirrors the repo layer's default).
+func casbinEffect(effect string) string {
+	if effect == casbinx.EffectDeny {
+		return casbinx.EffectDeny
+	}
+	return casbinx.EffectAllow
+}
 
 // bumpPolicyVersions increments the policy version counters for the given app
 // keys. Errors are logged and swallowed (periodic reconciliation converges).
@@ -81,14 +92,17 @@ func syncAccountRoleBinding(ctx context.Context, c container.Container, accountI
 }
 
 // syncRoleResourceRule applies one role-resource rule change to the in-memory
-// enforcer (the loader skips cross-app bindings for app-scope roles; callers
-// must mirror that skip before invoking this helper).
-func syncRoleResourceRule(ctx context.Context, c container.Container, role *model.Role, resourceAppKey string, resourceCode string, add bool) error {
+// enforcer as a 7-tuple with the role priority ladder (deny=45, allow=50).
+// The effect must mirror the persisted role_resources row; the loader's
+// skip-cases (app-scope roles cross-app) must be mirrored by callers.
+func syncRoleResourceRule(ctx context.Context, c container.Container, role *model.Role, resourceAppKey, resourceCode, effect string, add bool) error {
+	effect = casbinEffect(effect)
+	rule := roleResourceRule(role.Code, resourceAppKey, resourceCode, effect)
 	var err error
 	if add {
-		_, err = c.Enforcer().AddPolicy(casbinRole(role.Code), casbinDomApp(resourceAppKey), resourceCode, "*")
+		_, err = c.Enforcer().AddPolicy(rule...)
 	} else {
-		_, err = c.Enforcer().RemovePolicy(casbinRole(role.Code), casbinDomApp(resourceAppKey), resourceCode, "*")
+		_, err = c.Enforcer().RemovePolicy(rule...)
 	}
 	if err != nil {
 		log.Warn().Any("error", err).Msg("incremental role resource sync failed (reload will converge)")
@@ -96,16 +110,85 @@ func syncRoleResourceRule(ctx context.Context, c container.Container, role *mode
 	return err
 }
 
-// syncGrantRule applies one direct grant rule change to the in-memory enforcer.
-func syncGrantRule(ctx context.Context, c container.Container, accountID, resourceAppKey, resourceCode string, add bool) error {
+// roleResourceRule assembles the 7-tuple for a role_resources row.
+func roleResourceRule(roleCode, resourceAppKey, resourceCode, effect string) []string {
+	priority := casbinx.PriorityRoleAllow
+	if effect == casbinx.EffectDeny {
+		priority = casbinx.PriorityRoleDeny
+	}
+	return []string{
+		strconv.Itoa(priority),
+		casbinRole(roleCode),
+		casbinDomApp(resourceAppKey),
+		resourceCode,
+		"*",
+		effect,
+		"",
+	}
+}
+
+// grantResourceRule assembles the 7-tuple for an account_grants row.
+func grantResourceRule(accountID, resourceAppKey, resourceCode, effect string) []string {
+	priority := casbinx.PriorityGrantAllow
+	if effect == casbinx.EffectDeny {
+		priority = casbinx.PriorityGrantDeny
+	}
+	return []string{
+		strconv.Itoa(priority),
+		casbinSubjectAccount(accountID),
+		casbinDomApp(resourceAppKey),
+		resourceCode,
+		"*",
+		effect,
+		"",
+	}
+}
+
+// syncGrantRule applies one direct grant rule change to the in-memory
+// enforcer (grant ladder: deny=20, allow=30).
+func syncGrantRule(ctx context.Context, c container.Container, accountID, resourceAppKey, resourceCode, effect string, add bool) error {
+	effect = casbinEffect(effect)
+	rule := grantResourceRule(accountID, resourceAppKey, resourceCode, effect)
 	var err error
 	if add {
-		_, err = c.Enforcer().AddPolicy(casbinSubjectAccount(accountID), casbinDomApp(resourceAppKey), resourceCode, "*")
+		_, err = c.Enforcer().AddPolicy(rule...)
 	} else {
-		_, err = c.Enforcer().RemovePolicy(casbinSubjectAccount(accountID), casbinDomApp(resourceAppKey), resourceCode, "*")
+		_, err = c.Enforcer().RemovePolicy(rule...)
 	}
 	if err != nil {
 		log.Warn().Any("error", err).Msg("incremental grant sync failed (reload will converge)")
+	}
+	return err
+}
+
+// customRuleRule assembles the 7-tuple for a custom_rules row
+// ([priority, *, app:{key}, *, *, effect, expr]).
+func customRuleRule(appKey string, priority int, effect, expr string) []string {
+	return []string{
+		strconv.Itoa(priority),
+		"*",
+		casbinDomApp(appKey),
+		"*",
+		"*",
+		casbinEffect(effect),
+		expr,
+	}
+}
+
+// syncCustomRule applies one custom-rule change to the in-memory enforcer
+// (add on create/enable, remove on delete/disable/expr-effect-priority
+// change). The optional previous rule is removed first so an updated rule
+// cannot double-match under its old shape.
+func syncCustomRule(ctx context.Context, c container.Container, appKey string, priority int, effect, expr string, add bool) error {
+	rule := customRuleRule(appKey, priority, effect, expr)
+	var err error
+	if add {
+		_, err = c.Enforcer().AddPolicy(rule...)
+	} else {
+		_, err = c.Enforcer().RemovePolicy(rule...)
+	}
+	if err != nil {
+		log.Warn().Any("error", err).Msg("incremental custom rule sync failed (reload will converge)")
 	}
 	return err
 }

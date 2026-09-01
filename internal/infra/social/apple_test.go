@@ -191,19 +191,31 @@ func TestAppleVerifyIDTokenFailures(t *testing.T) {
 		claims jwt.MapClaims
 	}{
 		{
-			name:   "wrong audience",
-			claims: func() jwt.MapClaims { c := mintAppleClaims("s", "a@example.com", true); c["aud"] = "com.other.app"; return c }(),
+			name: "wrong audience",
+			claims: func() jwt.MapClaims {
+				c := mintAppleClaims("s", "a@example.com", true)
+				c["aud"] = "com.other.app"
+				return c
+			}(),
 		},
 		{
-			name:   "expired",
-			claims: func() jwt.MapClaims { c := mintAppleClaims("s", "a@example.com", true); c["exp"] = time.Now().Add(-time.Hour).Unix(); return c }(),
+			name: "expired",
+			claims: func() jwt.MapClaims {
+				c := mintAppleClaims("s", "a@example.com", true)
+				c["exp"] = time.Now().Add(-time.Hour).Unix()
+				return c
+			}(),
 		},
 		{
-			name:   "wrong issuer",
-			claims: func() jwt.MapClaims { c := mintAppleClaims("s", "a@example.com", true); c["iss"] = "https://evil.example.com"; return c }(),
+			name: "wrong issuer",
+			claims: func() jwt.MapClaims {
+				c := mintAppleClaims("s", "a@example.com", true)
+				c["iss"] = "https://evil.example.com"
+				return c
+			}(),
 		},
 		{
-			name: "unknown kid",
+			name:   "unknown kid",
 			claims: mintAppleClaims("s", "a@example.com", true),
 		},
 	}
@@ -263,13 +275,13 @@ func TestAppleDisabled(t *testing.T) {
 
 func TestFlexibleBool(t *testing.T) {
 	cases := map[string]bool{
-		`true`:  true,
-		`"true"`: true,
-		`"1"`:   true,
-		`false`: false,
+		`true`:    true,
+		`"true"`:  true,
+		`"1"`:     true,
+		`false`:   false,
 		`"false"`: false,
-		``:      false,
-		`null`:  false,
+		``:        false,
+		`null`:    false,
 	}
 	for raw, want := range cases {
 		if got := flexibleBool(json.RawMessage(raw)); got != want {

@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"sort"
+	"time"
 
 	"github.com/flametest/access-hub/internal/container"
 	"github.com/flametest/access-hub/internal/infra/model"
@@ -14,6 +16,9 @@ import (
 // AdminAuditService serves the audit trail with org row-level scoping.
 type AdminAuditService interface {
 	List(ctx context.Context, actor *AdminActor, action, orgKey string, page, pageSize int) (*dto.AuditLogPage, error)
+	// Summary aggregates the trailing window (M6). Platform callers see
+	// everything; org admins only their governed orgs.
+	Summary(ctx context.Context, actor *AdminActor, days int) (*dto.AuditSummaryResp, error)
 }
 
 type adminAuditServiceImpl struct {
@@ -154,6 +159,135 @@ func pageOf(logs []*model.AuditLog, total int64, page, pageSize int) *dto.AuditL
 		items = append(items, toAuditLogItem(l))
 	}
 	return &dto.AuditLogPage{Items: items, Total: total, Page: page, PageSize: pageSize}
+}
+
+// summaryDaysBounds clamp the requested window to 1..90 days.
+const (
+	summaryMinDays = 1
+	summaryMaxDays = 90
+)
+
+// Summary implements GET /api/v1/admin/audit-logs/summary?days=7. The days
+// parameter is clamped to [1, 90]. The GROUP BY aggregates run repo-side;
+// non-platform callers are scoped per governed org and the partial results
+// are merged (same strategy as List).
+func (s *adminAuditServiceImpl) Summary(ctx context.Context, actor *AdminActor, days int) (*dto.AuditSummaryResp, error) {
+	if days < summaryMinDays {
+		days = 7
+	}
+	if days > summaryMaxDays {
+		days = summaryMaxDays
+	}
+	since := time.Now().AddDate(0, 0, -days)
+	resp := &dto.AuditSummaryResp{
+		Days:      days,
+		ByAction:  []dto.AuditActionCount{},
+		Daily:     []dto.AuditDailyCount{},
+		TopActors: []dto.AuditActorCount{},
+	}
+
+	merge := func(sum *repository.AuditSummary) {
+		resp.ByAction = mergeActionCounts(resp.ByAction, sum.ByAction)
+		resp.Daily = mergeDailyCounts(resp.Daily, sum.Daily)
+		resp.TopActors = mergeActorCounts(resp.TopActors, sum.TopActors)
+	}
+
+	if actor.Platform {
+		sum, err := s.c.AuditLogRepo().Summary(ctx, since, nil)
+		if err != nil {
+			return nil, verrors.Wrap(err, "summarize audit logs")
+		}
+		merge(sum)
+		return resp, nil
+	}
+	if len(actor.OrgIDs) == 0 {
+		return resp, nil
+	}
+	for _, orgID := range actor.OrgIDs {
+		id := orgID
+		sum, err := s.c.AuditLogRepo().Summary(ctx, since, &id)
+		if err != nil {
+			return nil, verrors.Wrap(err, "summarize audit logs")
+		}
+		merge(sum)
+	}
+	resp.TopActors = topActors(resp.TopActors, 5)
+	return resp, nil
+}
+
+func mergeActionCounts(dst []dto.AuditActionCount, src []repository.AuditActionCount) []dto.AuditActionCount {
+	for _, s := range src {
+		found := false
+		for i := range dst {
+			if dst[i].Action == s.Action {
+				dst[i].Count += s.Count
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, dto.AuditActionCount{Action: s.Action, Count: s.Count})
+		}
+	}
+	sortByCountThenAction(dst, func(i int) (string, int64) { return dst[i].Action, dst[i].Count })
+	return dst
+}
+
+func mergeDailyCounts(dst []dto.AuditDailyCount, src []repository.AuditDailyCount) []dto.AuditDailyCount {
+	for _, s := range src {
+		found := false
+		for i := range dst {
+			if dst[i].Date == s.Date {
+				dst[i].Count += s.Count
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, dto.AuditDailyCount{Date: s.Date, Count: s.Count})
+		}
+	}
+	sort.Slice(dst, func(i, j int) bool { return dst[i].Date < dst[j].Date })
+	return dst
+}
+
+func mergeActorCounts(dst []dto.AuditActorCount, src []repository.AuditActorCount) []dto.AuditActorCount {
+	for _, s := range src {
+		found := false
+		for i := range dst {
+			if dst[i].ActorType == s.ActorType && dst[i].ActorID == s.ActorID {
+				dst[i].Count += s.Count
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst = append(dst, dto.AuditActorCount{ActorType: s.ActorType, ActorID: s.ActorID, Count: s.Count})
+		}
+	}
+	return dst
+}
+
+// sortByCountThenAction orders descending by count, action ascending as
+// tiebreak.
+func sortByCountThenAction[T any](items []T, key func(i int) (string, int64)) {
+	sort.SliceStable(items, func(i, j int) bool {
+		actionI, countI := key(i)
+		actionJ, countJ := key(j)
+		if countI != countJ {
+			return countI > countJ
+		}
+		return actionI < actionJ
+	})
+}
+
+// topActors trims the merged actor list to the top n by count.
+func topActors(items []dto.AuditActorCount, n int) []dto.AuditActorCount {
+	sortByCountThenAction(items, func(i int) (string, int64) { return items[i].ActorType + "\x00" + items[i].ActorID, items[i].Count })
+	if len(items) > n {
+		items = items[:n]
+	}
+	return items
 }
 
 // sortLogsDesc orders merged logs newest first (merge path only).

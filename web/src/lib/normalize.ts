@@ -37,6 +37,8 @@ function optStr(...values: unknown[]): string | undefined {
   return s || undefined;
 }
 
+export { asRecord, optStr, str, strList, pickList };
+
 /** Accepts string[] or a comma-separated summary string; falls back to .name. */
 function strList(...values: unknown[]): string[] {
   for (const v of values) {

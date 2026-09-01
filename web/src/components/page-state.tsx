@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/button";
 import { Card } from "@/components/card";
-import { Icon } from "@/components/icon";
+import { Icon, type IconName } from "@/components/icon";
 
 /** Placeholder skeleton for card grids. */
 export function SkeletonCards({
@@ -65,7 +65,7 @@ export function EmptyCard({
   title: string;
   description: string;
   action?: ReactNode;
-  icon?: "grid" | "key" | "ticket";
+  icon?: IconName;
 }) {
   return (
     <Card className="flex flex-col items-center gap-2 p-10 text-center">
@@ -73,6 +73,30 @@ export function EmptyCard({
       <p className="mt-1 font-bold">{title}</p>
       <p className="max-w-sm text-sm text-white/55">{description}</p>
       {action && <div className="mt-3">{action}</div>}
+    </Card>
+  );
+}
+
+/**
+ * "No permission" placeholder for admin sections: admin APIs are dogfooded
+ * via Casbin (org_admins only hold the app-scoped codes), so a 403 renders
+ * this instead of a raw error or a blank page.
+ */
+export function ForbiddenCard({
+  message,
+}: {
+  message?: string;
+}) {
+  return (
+    <Card className="flex flex-col items-center gap-3 p-10 text-center">
+      <span className="grid size-12 place-items-center rounded-2xl border border-white/15 bg-white/[0.07] text-white/60">
+        <Icon name="lock" className="size-6" />
+      </span>
+      <p className="mt-1 font-bold">You don&apos;t have access to this section</p>
+      <p className="max-w-sm text-sm text-white/55">
+        {message ??
+          "Admin permissions are managed per code (platform vs org-scoped). Ask a platform administrator for access if you need this."}
+      </p>
     </Card>
   );
 }

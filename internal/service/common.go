@@ -108,10 +108,14 @@ const (
 	AuditOAuthClientCreated  = "oauth_client_created"
 	AuditOAuthClientUpdated  = "oauth_client_updated"
 	AuditOAuthClientDeleted  = "oauth_client_deleted"
+	// M6 custom ABAC rules.
+	AuditCustomRuleCreated = "customrule_created"
+	AuditCustomRuleUpdated = "customrule_updated"
+	AuditCustomRuleDeleted = "customrule_deleted"
 	// M5 social login events.
-	AuditSocialLinked    = "social_linked"
-	AuditSocialRegister  = "social_register"
-	AuditSocialUnlinked  = "social_unlinked"
+	AuditSocialLinked   = "social_linked"
+	AuditSocialRegister = "social_register"
+	AuditSocialUnlinked = "social_unlinked"
 )
 
 // Actor types for audit_logs.actor_type.

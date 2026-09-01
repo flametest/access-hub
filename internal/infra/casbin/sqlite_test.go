@@ -165,4 +165,18 @@ var policyTableDDLs = []string{
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		deleted_at DATETIME
 	)`,
+	// M6: per-app ABAC custom rules translated by the loader.
+	`CREATE TABLE custom_rules (
+		id TEXT PRIMARY KEY,
+		version INTEGER NOT NULL DEFAULT 0,
+		app_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		expr TEXT NOT NULL,
+		effect TEXT NOT NULL DEFAULT 'allow',
+		priority INTEGER NOT NULL DEFAULT 40,
+		status TEXT NOT NULL DEFAULT 'active',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at DATETIME
+	)`,
 }

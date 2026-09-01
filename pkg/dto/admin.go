@@ -175,15 +175,19 @@ type GrantItem struct {
 	ResourceCode string     `json:"resource_code"`
 	ResourceName string     `json:"resource_name"`
 	ResourceType string     `json:"resource_type"`
+	Effect       string     `json:"effect"`
 	GrantedBy    string     `json:"granted_by"`
 	GrantedAt    time.Time  `json:"granted_at"`
 	ExpiresAt    *time.Time `json:"expires_at"`
 }
 
 // AddGrantReq is the body of POST .../accounts/{accountId}/grants.
+// Effect is allow|deny (M6; default allow — a deny grant blocks the resource
+// for the account regardless of role bindings).
 type AddGrantReq struct {
 	ResourceID string     `json:"resource_id" validate:"required"`
 	ExpiresAt  *time.Time `json:"expires_at"`
+	Effect     string     `json:"effect" validate:"omitempty,oneof=allow deny"`
 }
 
 // ---------- invitations (admin) ----------
@@ -309,9 +313,22 @@ type UpdateRoleReq struct {
 	Name *string `json:"name" validate:"omitempty,max=255"`
 }
 
-// SetRoleResourcesReq is the body of PUT .../roles/{roleId}/resources.
+// SetRoleResourceItem is one entry of SetRoleResourcesReq.Items: the effect
+// (allow|deny) to persist for the resource binding (M6 deny enablement).
+type SetRoleResourceItem struct {
+	ResourceID string `json:"resource_id" validate:"required"`
+	Effect     string `json:"effect" validate:"omitempty,oneof=allow deny"`
+}
+
+// SetRoleResourcesReq is the body of PUT .../roles/{roleId}/resources. Two
+// shapes are accepted (M6):
+//   - {"resource_ids": ["id", ...]} — legacy all-allow form;
+//   - {"items": [{"resource_id": "id", "effect": "allow|deny"}, ...]}.
+//
+// Providing both non-empty is rejected to avoid ambiguity.
 type SetRoleResourcesReq struct {
-	ResourceIDs []string `json:"resource_ids" validate:"omitempty,dive"`
+	ResourceIDs []string              `json:"resource_ids" validate:"omitempty,dive"`
+	Items       []SetRoleResourceItem `json:"items" validate:"omitempty,dive"`
 }
 
 // ---------- audit logs ----------
@@ -337,4 +354,86 @@ type AuditLogPage struct {
 	Total    int64          `json:"total"`
 	Page     int            `json:"page"`
 	PageSize int            `json:"page_size"`
+}
+
+// AuditActionCount is one action group of the audit summary.
+type AuditActionCount struct {
+	Action string `json:"action"`
+	Count  int64  `json:"count"`
+}
+
+// AuditDailyCount is one day bucket of the audit summary (Date is
+// "YYYY-MM-DD" UTC).
+type AuditDailyCount struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+// AuditActorCount is one actor group of the audit summary.
+type AuditActorCount struct {
+	ActorType string `json:"actor_type"`
+	ActorID   string `json:"actor_id"`
+	Count     int64  `json:"count"`
+}
+
+// AuditSummaryResp is the response of GET /api/v1/admin/audit-logs/summary
+// (M6): grouped counts over the trailing `days` window (clamped 1..90).
+type AuditSummaryResp struct {
+	Days      int                `json:"days"`
+	ByAction  []AuditActionCount `json:"by_action"`
+	Daily     []AuditDailyCount  `json:"daily"`
+	TopActors []AuditActorCount  `json:"top_actors"`
+}
+
+// ---------- custom rules (M6) ----------
+
+// CustomRuleItem is the admin representation of a per-app ABAC rule.
+type CustomRuleItem struct {
+	ID        string    `json:"id"`
+	AppID     string    `json:"app_id"`
+	AppKey    string    `json:"app_key"`
+	Name      string    `json:"name"`
+	Expr      string    `json:"expr"`
+	Effect    string    `json:"effect"`
+	Priority  int       `json:"priority"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CreateCustomRuleReq is the body of POST /api/v1/admin/apps/{appKey}/custom-rules.
+// The expression is validated against the ABAC env ({sub, dom, obj, act,
+// roles, now}) at create time; an invalid expression is a 400.
+type CreateCustomRuleReq struct {
+	Name     string `json:"name" validate:"required,max=255"`
+	Expr     string `json:"expr" validate:"required,max=4096"`
+	Effect   string `json:"effect" validate:"required,oneof=allow deny"`
+	Priority *int   `json:"priority" validate:"omitempty,min=1,max=100"`
+	Status   string `json:"status" validate:"omitempty,oneof=active disabled"`
+}
+
+// UpdateCustomRuleReq is the body of PATCH .../custom-rules/{ruleId}; every
+// changed field re-validates and re-syncs the policy set.
+type UpdateCustomRuleReq struct {
+	Name     *string `json:"name" validate:"omitempty,max=255"`
+	Expr     *string `json:"expr" validate:"omitempty,max=4096"`
+	Effect   *string `json:"effect" validate:"omitempty,oneof=allow deny"`
+	Priority *int    `json:"priority" validate:"omitempty,min=1,max=100"`
+	Status   *string `json:"status" validate:"omitempty,oneof=active disabled"`
+}
+
+// TestCustomRuleReq is the body of POST .../custom-rules/test (dry-run,
+// nothing persisted). Obj defaults to "test:obj", act to "*".
+type TestCustomRuleReq struct {
+	Expr string `json:"expr" validate:"required,max=4096"`
+	Obj  string `json:"obj" validate:"omitempty,max=128"`
+	Act  string `json:"act" validate:"omitempty,max=64"`
+}
+
+// CustomRuleTestResp is the response of the dry-run endpoint: the boolean
+// outcome and, when the expression failed to compile/evaluate, the error
+// message (allowed=false, fail-close).
+type CustomRuleTestResp struct {
+	Allowed bool   `json:"allowed"`
+	Error   string `json:"error,omitempty"`
 }

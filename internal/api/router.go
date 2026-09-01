@@ -122,6 +122,16 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 	e.Add(http.MethodPut, "/api/v1/admin/apps/:appKey/roles/:roleId/resources", auth.RequireAdmin("admin:role:manage")(h.AdminSetRoleResources))
 
 	e.Add(http.MethodGet, "/api/v1/admin/audit-logs", auth.RequireAdmin("admin:audit:read")(h.AdminListAuditLogs))
+	e.Add(http.MethodGet, "/api/v1/admin/audit-logs/summary", auth.RequireAdmin("admin:audit:read")(h.AdminAuditSummary))
+
+	// ----- admin custom rules (M6; app-scoped codes -> org_admin binds) -----
+	e.Add(http.MethodGet, "/api/v1/admin/apps/:appKey/custom-rules", auth.RequireAdmin("admin:customrule:read")(h.AdminListCustomRules))
+	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/custom-rules", auth.RequireAdmin("admin:customrule:manage")(h.AdminCreateCustomRule))
+	e.Add(http.MethodPatch, "/api/v1/admin/apps/:appKey/custom-rules/:ruleId", auth.RequireAdmin("admin:customrule:manage")(h.AdminUpdateCustomRule))
+	e.Add(http.MethodDelete, "/api/v1/admin/apps/:appKey/custom-rules/:ruleId", auth.RequireAdmin("admin:customrule:manage")(h.AdminDeleteCustomRule))
+	// Dry-run: evaluates an expression against the caller's own subject
+	// without persisting anything (a read-ish op -> :read code).
+	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/custom-rules/test", auth.RequireAdmin("admin:customrule:read")(h.AdminTestCustomRule))
 
 	// ----- oauth2/oidc provider (M4) -----
 	// SPA-friendly JSON authorize (center identity token).

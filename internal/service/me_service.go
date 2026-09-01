@@ -15,6 +15,7 @@ import (
 	"github.com/flametest/access-hub/internal/infra/repository"
 	"github.com/flametest/access-hub/pkg/dto"
 	"github.com/flametest/vita/verrors"
+	log "github.com/flametest/vita/vlog"
 )
 
 // MeService implements the identity-scoped /me endpoints.
@@ -329,21 +330,43 @@ func (s *meServiceImpl) Menus(ctx context.Context, actx *AuthContextInfo, appPar
 	if err != nil {
 		return nil, verrors.NotFoundError("app not found")
 	}
-	codes, err := s.grantedCodeSet(ctx, accounts)
-	if err != nil {
-		return nil, err
-	}
 	rows, err := s.c.ResourceRepo().ListByAppAndType(ctx, app.Id, domain.ResourceTypeMenu)
 	if err != nil {
 		return nil, verrors.Wrap(err, "list menus")
 	}
-	return buildMenuTree(rows, codes), nil
+	// M6: menu visibility is enforcer-driven (deny-aware): a node is visible
+	// iff its code passes Enforce for at least one of the caller's accounts in
+	// the app — role allows/denies, direct grants AND custom ABAC rules all
+	// participate through the priority ladder. Fail-close on enforcer errors.
+	seen := make(map[string]bool, len(rows))
+	visible := func(code string) bool {
+		if cached, ok := seen[code]; ok {
+			return cached
+		}
+		allowed := false
+		for _, account := range accounts {
+			ok, err := s.c.Enforcer().Enforce(casbinSubjectAccount(account.Id), appKey, code, "*")
+			if err != nil {
+				// Fail-close: an evaluation error hides the node.
+				log.Warn().Any("error", err).Any("code", code).Msg("menu visibility check failed (fail-close)")
+				ok = false
+			}
+			if ok {
+				allowed = true
+				break
+			}
+		}
+		seen[code] = allowed
+		return allowed
+	}
+	return buildMenuTree(rows, visible), nil
 }
 
-// buildMenuTree assembles the visible menu tree filtered by the granted code
-// set: a node is included iff its code is granted; a parent is included iff
-// any descendant survives the filter.
-func buildMenuTree(rows []*model.Resource, granted map[string]struct{}) []*dto.MenuNode {
+// buildMenuTree assembles the visible menu tree filtered by the visibility
+// predicate (enforcer-backed since M6): a node is included iff its code
+// passes the predicate; a parent is included iff any descendant survives the
+// filter. type/status/visible/sort are respected as before.
+func buildMenuTree(rows []*model.Resource, visible func(code string) bool) []*dto.MenuNode {
 	byID := make(map[string]*model.Resource, len(rows))
 	children := make(map[string][]*model.Resource, len(rows))
 	var roots []*model.Resource
@@ -378,8 +401,7 @@ func buildMenuTree(rows []*model.Resource, granted map[string]struct{}) []*dto.M
 				node.Children = append(node.Children, child)
 			}
 		}
-		_, grantedHere := granted[r.Code]
-		if grantedHere || len(node.Children) > 0 {
+		if visible(r.Code) || len(node.Children) > 0 {
 			return node
 		}
 		return nil
@@ -398,6 +420,12 @@ func buildMenuTree(rows []*model.Resource, granted map[string]struct{}) []*dto.M
 }
 
 func (s *meServiceImpl) Permissions(ctx context.Context, actx *AuthContextInfo, appParam string) (*dto.PermissionsResp, error) {
+	// Known limitation (M6, intentional): this endpoint stays DB-derived
+	// (role_resources + account_grants) and therefore reports ALLOW-side
+	// codes only — deny bindings and custom ABAC rules are NOT reflected
+	// here. It is a button-hint convenience for frontends; the authoritative
+	// decision is always server-side via /authz/check (and /me/menus, which
+	// IS enforcer-driven and deny-aware).
 	appKey, accounts, err := s.resolveGrantedApp(ctx, actx, appParam)
 	if err != nil {
 		return nil, err

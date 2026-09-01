@@ -237,6 +237,15 @@ export function errMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * True when the API answered 403 (Casbin admin codes are dogfooded: org_admins
+ * only hold the app-scoped codes, platform sections answer 403). Admin pages
+ * render a "no permission" placeholder instead of a raw error.
+ */
+export function isForbidden(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 403;
+}
+
 export const api = {
   register: (body: RegisterReq): Promise<TokenPair> =>
     request<TokenPair>("/auth/register", { method: "POST", body, auth: false }),

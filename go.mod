@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/casbin/casbin/v2 v2.135.0
+	github.com/expr-lang/expr v1.17.8
 	github.com/flametest/vita v0.0.0-20260711144608-1522fa21f9d7
 	github.com/go-oauth2/oauth2/v4 v4.5.4
 	github.com/go-playground/validator/v10 v10.28.0
@@ -15,6 +16,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/spf13/viper v1.21.0
 	golang.org/x/crypto v0.55.0
+	golang.org/x/oauth2 v0.36.0
 	gorm.io/datatypes v1.2.7
 	gorm.io/gorm v1.31.1
 )
@@ -85,7 +87,6 @@ require (
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect

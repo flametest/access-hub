@@ -19,8 +19,9 @@ type Enforcer struct {
 	watcher persist.Watcher
 }
 
-// NewEnforcer creates the enforcer with the given (read-only) adapter and
-// performs the initial full policy load.
+// NewEnforcer creates the enforcer with the given (read-only) adapter,
+// registers the abacEval matcher function and performs the initial full
+// policy load.
 func NewEnforcer(loader persist.Adapter) (*Enforcer, error) {
 	// Build the model from the embedded text (a plain string param would be
 	// interpreted as a model file path).
@@ -33,10 +34,69 @@ func NewEnforcer(loader persist.Adapter) (*Enforcer, error) {
 		return nil, verrors.Wrap(err, "create casbin enforcer")
 	}
 	e.EnableAutoSave(false)
+	en := &Enforcer{e: e}
+	// The ABAC matcher function must be registered before the first Enforce:
+	// govaluate resolves function names when the matcher expression is first
+	// compiled (and caches it), so a late registration would not take effect.
+	e.AddFunction("abacEval", en.abacEvalFunc)
 	if err := e.LoadPolicy(); err != nil {
 		return nil, verrors.Wrap(err, "load casbin policies")
 	}
-	return &Enforcer{e: e}, nil
+	return en, nil
+}
+
+// abacEvalFunc is the govaluate adapter invoked by the matcher as
+// abacEval(p.cond, r.sub, r.dom, r.obj, r.act). Errors propagate out of
+// Enforce as (false, err) — fail-close.
+func (en *Enforcer) abacEvalFunc(args ...interface{}) (interface{}, error) {
+	if len(args) != 5 {
+		return false, fmt.Errorf("abacEval expects 5 arguments (cond, sub, dom, obj, act), got %d", len(args))
+	}
+	cond, ok := args[0].(string)
+	if !ok {
+		return false, fmt.Errorf("abacEval cond argument must be a string")
+	}
+	strs := make([]string, 4)
+	for i, raw := range args[1:] {
+		s, ok := raw.(string)
+		if !ok {
+			return false, fmt.Errorf("abacEval request arguments must be strings")
+		}
+		strs[i] = s
+	}
+	out, err := evalABAC(en.rolesInDomain, cond, strs[0], strs[1], strs[2], strs[3])
+	if err != nil {
+		return false, err
+	}
+	return out, nil
+}
+
+// rolesInDomain returns the subject's g-bound role codes for the domain plus
+// the wildcard-domain (global) bindings, with the "role:" prefix stripped
+// and duplicates removed. It reads the CORE enforcer's role manager: the
+// caller runs under the synced enforcer's read lock (matcher evaluation), so
+// re-acquiring the synced lock could deadlock against a pending writer.
+func (en *Enforcer) rolesInDomain(sub, dom string) []string {
+	roles := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	for _, domain := range []string{dom, DomWildcard} {
+		for _, role := range en.e.Enforcer.GetRolesForUserInDomain(sub, domain) {
+			code := strings.TrimPrefix(role, RolePrefix)
+			if _, dup := seen[code]; dup {
+				continue
+			}
+			seen[code] = struct{}{}
+			roles = append(roles, code)
+		}
+	}
+	return roles
+}
+
+// RolesOfSubjectInDomain is the exported view of rolesInDomain (admin
+// custom-rule dry-run endpoint): the subject's roles in the (normalized)
+// domain and the wildcard domain, prefix-stripped.
+func (en *Enforcer) RolesOfSubjectInDomain(sub, dom string) []string {
+	return en.rolesInDomain(sub, normalizeDom(dom))
 }
 
 // normalizeDom aligns the domain argument with the loader's convention
@@ -50,8 +110,10 @@ func normalizeDom(dom string) string {
 	return DomPrefixApp + dom
 }
 
-// Enforce evaluates the request (sub, dom, obj, act). Fail-close: an internal
-// error yields (false, err), never an allow.
+// Enforce evaluates the request (sub, dom, obj, act) against the 7-tuple
+// policy set (priority ladder + explicit eft + optional ABAC cond).
+// Fail-close: an internal error (including an ABAC evaluation failure)
+// yields (false, err), never an allow.
 func (en *Enforcer) Enforce(sub, dom, obj, act string) (bool, error) {
 	dom = normalizeDom(dom)
 	ok, err := en.e.Enforce(sub, dom, obj, act)
@@ -70,15 +132,16 @@ func (en *Enforcer) Reload() error {
 	return nil
 }
 
-// AddPolicy applies an incremental p rule in-memory (no storage). The dom
-// term (rule[1]) is normalized like Enforce.
+// AddPolicy applies an incremental 7-tuple p rule
+// [priority, sub, dom, obj, act, eft, cond] in-memory (no storage). The dom
+// term (rule[2]) is normalized like Enforce.
 func (en *Enforcer) AddPolicy(rule ...string) (bool, error) {
 	params := make([]interface{}, len(rule))
 	for i, r := range rule {
 		params[i] = r
 	}
-	if len(params) >= 2 {
-		params[1] = normalizeDom(params[1].(string))
+	if len(params) >= 3 {
+		params[2] = normalizeDom(params[2].(string))
 	}
 	ok, err := en.e.AddPolicy(params...)
 	if err != nil {
@@ -88,14 +151,15 @@ func (en *Enforcer) AddPolicy(rule ...string) (bool, error) {
 }
 
 // RemovePolicy removes a p rule in-memory (no storage). The dom term
-// (rule[1]) is normalized like Enforce.
+// (rule[2]) is normalized like Enforce; the rule must be the exact 7-tuple
+// emitted by AddPolicy/the loader.
 func (en *Enforcer) RemovePolicy(rule ...string) (bool, error) {
 	params := make([]interface{}, len(rule))
 	for i, r := range rule {
 		params[i] = r
 	}
-	if len(params) >= 2 {
-		params[1] = normalizeDom(params[1].(string))
+	if len(params) >= 3 {
+		params[2] = normalizeDom(params[2].(string))
 	}
 	ok, err := en.e.RemovePolicy(params...)
 	if err != nil {
@@ -121,8 +185,8 @@ func (en *Enforcer) AddGroupingPolicy(rule ...string) (bool, error) {
 	return ok, nil
 }
 
-// RemoveGroupingPolicy removes a g rule in-memory. The dom term (rule[2])
-// is normalized like Enforce.
+// RemoveGroupingPolicy removes a g rule in-memory. The dom term (rule[2]) is
+// normalized like Enforce.
 func (en *Enforcer) RemoveGroupingPolicy(rule ...string) (bool, error) {
 	params := make([]interface{}, len(rule))
 	for i, r := range rule {

@@ -6,15 +6,19 @@ import (
 	"time"
 
 	"github.com/flametest/access-hub/internal/infra/model"
+	"github.com/flametest/vita/vgorm"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 // AccountGrantRepo manages direct (role-free) resource grants on accounts.
 type AccountGrantRepo interface {
-	// Add grants one resource directly to an account. grantedBy may be "" and
-	// expiresAt nil (permanent). Re-granting is a no-op (idempotent).
-	Add(ctx context.Context, accountID, resourceID, grantedBy string, expiresAt *time.Time) error
+	// Add grants one resource directly to an account with the given effect
+	// (allow|deny; M6). grantedBy may be "" and expiresAt nil (permanent).
+	// Re-granting is a no-op (idempotent). Returns the grant row id ("" when
+	// an identical active grant already existed).
+	Add(ctx context.Context, accountID, resourceID, grantedBy, effect string, expiresAt *time.Time) (string, error)
 	// Remove soft-deletes the grant; zero rows yields NotFoundError.
 	Remove(ctx context.Context, accountID, resourceID string) error
 	ListByAccount(ctx context.Context, accountID string) ([]*model.AccountGrant, error)
@@ -38,10 +42,12 @@ type AccountGrantRepo interface {
 // AccountGrantWithResource is an account_grants row joined with the display
 // fields of its resource.
 type AccountGrantWithResource struct {
-	Grant        model.AccountGrant
-	ResourceCode string `gorm:"column:resource_code"`
-	ResourceName string `gorm:"column:resource_name"`
-	ResourceType string `gorm:"column:resource_type"`
+	// embedded: the query selects account_grants.* flat, so GORM must scan
+	// these columns inline instead of treating the struct as an association.
+	Grant        model.AccountGrant `gorm:"embedded"`
+	ResourceCode string             `gorm:"column:resource_code"`
+	ResourceName string             `gorm:"column:resource_name"`
+	ResourceType string             `gorm:"column:resource_type"`
 }
 
 type accountGrantRepoImpl struct {
@@ -52,20 +58,34 @@ func NewAccountGrantRepo(db *gorm.DB) AccountGrantRepo {
 	return &accountGrantRepoImpl{db: db}
 }
 
-func (r *accountGrantRepoImpl) Add(ctx context.Context, accountID, resourceID, grantedBy string, expiresAt *time.Time) error {
+func (r *accountGrantRepoImpl) Add(ctx context.Context, accountID, resourceID, grantedBy, effect string, expiresAt *time.Time) (string, error) {
+	if effect != "allow" && effect != "deny" {
+		effect = grantEffectAllow
+	}
 	row := model.AccountGrant{
-		AccountID:  accountID,
-		ResourceID: resourceID,
-		GrantedAt:  time.Now(),
-		ExpiresAt:  expiresAt,
-		Effect:     grantEffectAllow,
+		// The id is generated in Go: sqlite has no gen_random_uuid() default
+		// and the conflict path (DoNothing) would not backfill one.
+		BasePostgres: vgorm.BasePostgres{Id: uuid.NewString()},
+		AccountID:    accountID,
+		ResourceID:   resourceID,
+		GrantedAt:    time.Now(),
+		ExpiresAt:    expiresAt,
+		Effect:       effect,
 	}
 	if grantedBy != "" {
 		row.GrantedBy = &grantedBy
 	}
-	return r.db.WithContext(ctx).
+	if err := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(&row).Error
+		Create(&row).Error; err != nil {
+		return "", err
+	}
+	// On conflict the row was not inserted (RowsAffected == 0): the caller can
+	// resolve the existing grant via the list endpoint.
+	if row.Id == "" {
+		return "", nil
+	}
+	return row.Id, nil
 }
 
 func (r *accountGrantRepoImpl) Remove(ctx context.Context, accountID, resourceID string) error {
@@ -90,7 +110,7 @@ func (r *accountGrantRepoImpl) ListPolicyRows(ctx context.Context) ([]PolicyAcco
 	err := r.db.WithContext(ctx).
 		Table("account_grants").
 		Select("account_grants.id, account_grants.account_id, resources.code AS resource_code, " +
-			"apps.key AS resource_app_key, account_grants.expires_at").
+			"apps.key AS resource_app_key, account_grants.effect, account_grants.expires_at").
 		Joins("JOIN resources ON resources.id = account_grants.resource_id AND resources.deleted_at IS NULL AND resources.status = 'active'").
 		Joins("JOIN apps ON apps.id = resources.app_id AND apps.deleted_at IS NULL AND apps.status = 'active'").
 		Joins("JOIN accounts ON accounts.id = account_grants.account_id AND accounts.deleted_at IS NULL AND accounts.status <> 'disabled'").

@@ -65,6 +65,8 @@ func fillID(v interface{}) {
 		m.Id = mustUUID(m.Id)
 	case *model.AccountGrant:
 		m.Id = mustUUID(m.Id)
+	case *model.CustomRule:
+		m.Id = mustUUID(m.Id)
 	}
 }
 
@@ -148,6 +150,7 @@ func (f *fixture) newEnforcer(t *testing.T) *Enforcer {
 		repository.NewAccountRoleRepo(f.db),
 		repository.NewAccountGrantRepo(f.db),
 		repository.NewOAuthClientRepo(f.db),
+		repository.NewCustomRuleRepo(f.db),
 		repository.NewAppRepo(f.db),
 	)
 	en, err := NewEnforcer(loader)
@@ -342,6 +345,7 @@ func TestLoaderRejectsWrites(t *testing.T) {
 		repository.NewAccountRoleRepo(f.db),
 		repository.NewAccountGrantRepo(f.db),
 		repository.NewOAuthClientRepo(f.db),
+		repository.NewCustomRuleRepo(f.db),
 		repository.NewAppRepo(f.db),
 	)
 	if err := loader.SavePolicy(nil); err == nil {

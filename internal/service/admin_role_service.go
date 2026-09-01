@@ -5,6 +5,7 @@ import (
 
 	"github.com/flametest/access-hub/internal/container"
 	"github.com/flametest/access-hub/internal/domain"
+	casbinx "github.com/flametest/access-hub/internal/infra/casbin"
 	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/access-hub/internal/infra/repository"
 	"github.com/flametest/access-hub/pkg/dto"
@@ -170,7 +171,7 @@ func (s *adminRoleServiceImpl) Delete(ctx context.Context, actor *AdminActor, ap
 			if err != nil {
 				continue
 			}
-			_ = syncRoleResourceRule(ctx, s.c, role, resourceApp.Key, resource.Code, false)
+			_ = syncRoleResourceRule(ctx, s.c, role, resourceApp.Key, resource.Code, a.Effect, false)
 		}
 	}
 	if err := s.c.RoleRepo().UpdateFields(ctx, role.Id, map[string]any{"deleted_at": nowUTC()}); err != nil {
@@ -180,6 +181,25 @@ func (s *adminRoleServiceImpl) Delete(ctx context.Context, actor *AdminActor, ap
 	return nil
 }
 
+// normalizeBindingEffect validates an effect value ("allow"/"deny", default
+// allow) shared by the role-resource and grant endpoints.
+func normalizeBindingEffect(effect string) (string, error) {
+	switch effect {
+	case "":
+		return casbinx.EffectAllow, nil
+	case casbinx.EffectAllow:
+		return casbinx.EffectAllow, nil
+	case casbinx.EffectDeny:
+		return casbinx.EffectDeny, nil
+	default:
+		return "", verrors.BadRequestError("effect must be allow or deny")
+	}
+}
+
+// SetResources replaces the role's resource bindings. M6: bindings carry an
+// effect (allow|deny); the legacy all-allow shape {"resource_ids": [...]} is
+// still accepted. The diff of (resource, effect) pairs drives the
+// incremental policy sync.
 func (s *adminRoleServiceImpl) SetResources(ctx context.Context, actor *AdminActor, appKey, roleID string, req *dto.SetRoleResourcesReq) ([]string, error) {
 	app, err := actor.accessibleApp(ctx, s.c, appKey)
 	if err != nil {
@@ -189,14 +209,31 @@ func (s *adminRoleServiceImpl) SetResources(ctx context.Context, actor *AdminAct
 	if err != nil {
 		return nil, err
 	}
-	// Validate resources: all must belong to the role's app.
-	resources := make([]*model.Resource, 0, len(req.ResourceIDs))
-	seen := make(map[string]struct{}, len(req.ResourceIDs))
-	for _, id := range req.ResourceIDs {
-		if _, dup := seen[id]; dup {
-			continue
+	// Resolve the desired (resource, effect) pairs from either body shape.
+	if len(req.ResourceIDs) > 0 && len(req.Items) > 0 {
+		return nil, verrors.BadRequestError("provide either resource_ids or items, not both")
+	}
+	desired := make(map[string]string, len(req.Items)+len(req.ResourceIDs))
+	order := make([]string, 0, len(req.Items)+len(req.ResourceIDs))
+	for _, item := range req.Items {
+		effect, err := normalizeBindingEffect(item.Effect)
+		if err != nil {
+			return nil, err
 		}
-		seen[id] = struct{}{}
+		if _, dup := desired[item.ResourceID]; !dup {
+			order = append(order, item.ResourceID)
+		}
+		desired[item.ResourceID] = effect
+	}
+	for _, id := range req.ResourceIDs {
+		if _, dup := desired[id]; !dup {
+			order = append(order, id)
+			desired[id] = casbinx.EffectAllow
+		}
+	}
+	// Validate resources: all must belong to the role's app.
+	resources := make([]*model.Resource, 0, len(order))
+	for _, id := range order {
 		resource, err := s.c.ResourceRepo().FindByID(ctx, id)
 		if err != nil {
 			if repository.IsNotFound(err) {
@@ -209,34 +246,47 @@ func (s *adminRoleServiceImpl) SetResources(ctx context.Context, actor *AdminAct
 		}
 		resources = append(resources, resource)
 	}
-	// Diff before/after for incremental policy sync.
+	// Diff before/after (resource -> effect) for incremental policy sync.
 	beforeRows, err := s.c.RoleResourceRepo().ListByRole(ctx, role.Id)
 	if err != nil {
 		return nil, verrors.Wrap(err, "list current role resources")
 	}
-	before := make(map[string]struct{}, len(beforeRows))
+	before := make(map[string]string, len(beforeRows))
 	for _, row := range beforeRows {
-		before[row.ResourceID] = struct{}{}
+		before[row.ResourceID] = casbinEffect(row.Effect)
 	}
-	after := make(map[string]struct{}, len(resources))
-	resourceIDs := make([]string, 0, len(resources))
-	for _, r := range resources {
-		after[r.Id] = struct{}{}
-		resourceIDs = append(resourceIDs, r.Id)
+	after := desired
+	items := make([]repository.RoleResourceItem, 0, len(order))
+	for _, id := range order {
+		items = append(items, repository.RoleResourceItem{ResourceID: id, Effect: after[id]})
 	}
-	if err := s.c.RoleResourceRepo().ReplaceForRole(ctx, role.Id, resourceIDs); err != nil {
+	if err := s.c.RoleResourceRepo().ReplaceForRole(ctx, role.Id, items); err != nil {
 		return nil, verrors.Wrap(err, "replace role resources")
 	}
+	// The loader skips app-scope roles whose resource lives in another app;
+	// global roles follow the resource's app dom. Mirror that here.
+	syncable := func(r *model.Resource) bool {
+		return role.Scope == domain.RoleScopeGlobal || role.AppID == r.AppID
+	}
 	for _, r := range resources {
-		if _, had := before[r.Id]; had {
+		beforeEffect, had := before[r.Id]
+		afterEffect := after[r.Id]
+		if !had {
+			if syncable(r) {
+				_ = syncRoleResourceRule(ctx, s.c, role, app.Key, r.Code, afterEffect, true)
+			}
 			continue
 		}
-		if role.Scope == domain.RoleScopeApp && role.AppID == r.AppID {
-			_ = syncRoleResourceRule(ctx, s.c, role, app.Key, r.Code, true)
+		if had && beforeEffect != afterEffect {
+			// Effect flipped: swap the rule (remove the old tuple, add the new).
+			if syncable(r) {
+				_ = syncRoleResourceRule(ctx, s.c, role, app.Key, r.Code, beforeEffect, false)
+				_ = syncRoleResourceRule(ctx, s.c, role, app.Key, r.Code, afterEffect, true)
+			}
 		}
 	}
 	removedIDs := make([]string, 0)
-	for id := range before {
+	for id, beforeEffect := range before {
 		if _, kept := after[id]; kept {
 			continue
 		}
@@ -245,8 +295,8 @@ func (s *adminRoleServiceImpl) SetResources(ctx context.Context, actor *AdminAct
 		if err != nil {
 			continue
 		}
-		if role.Scope == domain.RoleScopeApp && role.AppID == resource.AppID {
-			_ = syncRoleResourceRule(ctx, s.c, role, app.Key, resource.Code, false)
+		if syncable(resource) {
+			_ = syncRoleResourceRule(ctx, s.c, role, app.Key, resource.Code, beforeEffect, false)
 		}
 	}
 	_ = casbinNotify(ctx, s.c, []string{app.Key})
@@ -255,7 +305,7 @@ func (s *adminRoleServiceImpl) SetResources(ctx context.Context, actor *AdminAct
 	return resourceCodes(resources), nil
 }
 
-func countAdded(resources []*model.Resource, before map[string]struct{}) int {
+func countAdded(resources []*model.Resource, before map[string]string) int {
 	n := 0
 	for _, r := range resources {
 		if _, ok := before[r.Id]; !ok {

@@ -54,9 +54,10 @@ type Handlers struct {
 	AdminRes   service.AdminResourceService
 	AdminRole  service.AdminRoleService
 	AdminAudit service.AdminAuditService
-	// M4 services.
-	OAuth      service.OAuthService
-	AdminOAuth service.AdminOAuthClientService
+	// M6 services.
+	AdminCustomRule service.AdminCustomRuleService
+	OAuth           service.OAuthService
+	AdminOAuth      service.AdminOAuthClientService
 	// M5 social login.
 	Social service.SocialService
 }
@@ -77,9 +78,11 @@ func NewHandlers(c container.Container) *Handlers {
 		AdminRes:   service.NewAdminResourceService(c),
 		AdminRole:  service.NewAdminRoleService(c),
 		AdminAudit: service.NewAdminAuditService(c),
-		OAuth:      service.NewOAuthService(c),
-		AdminOAuth: service.NewAdminOAuthClientService(c),
-		Social:     service.NewSocialService(c),
+		// M6 admin custom rules.
+		AdminCustomRule: service.NewAdminCustomRuleService(c),
+		OAuth:           service.NewOAuthService(c),
+		AdminOAuth:      service.NewAdminOAuthClientService(c),
+		Social:          service.NewSocialService(c),
 	}
 }
 

@@ -3,9 +3,10 @@ package repository
 import "time"
 
 // Denormalized join rows for the read-only Casbin policy loader. The loader
-// translates these rows into p/g rules per design.md §6.1; the queries behind
-// them already drop rows referencing soft-deleted or disabled entities, while
-// same-app checks and expiry checks are enforced by the loader itself.
+// translates these rows into 7-tuple p rules / g rules per design.md §6.1;
+// the queries behind them already drop rows referencing soft-deleted or
+// disabled entities, while same-app checks and expiry checks are enforced by
+// the loader itself.
 
 // PolicyRoleResource is a role_resources row joined with its role and the
 // resource's app (for the dom translation).
@@ -18,6 +19,7 @@ type PolicyRoleResource struct {
 	ResourceCode   string `gorm:"column:resource_code"`
 	ResourceAppID  string `gorm:"column:resource_app_id"`
 	ResourceAppKey string `gorm:"column:resource_app_key"`
+	Effect         string `gorm:"column:effect"`
 }
 
 // PolicyAccountRole is an account_roles row joined with its role and the
@@ -37,5 +39,6 @@ type PolicyAccountGrant struct {
 	AccountID      string     `gorm:"column:account_id"`
 	ResourceCode   string     `gorm:"column:resource_code"`
 	ResourceAppKey string     `gorm:"column:resource_app_key"`
+	Effect         string     `gorm:"column:effect"`
 	ExpiresAt      *time.Time `gorm:"column:expires_at"`
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
 	"github.com/flametest/access-hub/internal/domain"
 	"github.com/flametest/access-hub/internal/infra/repository"
+	log "github.com/flametest/vita/vlog"
 )
 
 // Subject/role prefixes used inside Casbin rules.
@@ -27,22 +29,29 @@ const (
 var errReadOnly = errors.New("casbin loader adapter is read-only")
 
 // Loader is the read-only Casbin adapter: it loads the full policy set by
-// translating business-table rows (design.md §6.1). Policies are never
-// persisted to a casbin_rule table.
+// translating business-table rows (design.md §6.1) into 7-tuple rules
+// [priority, sub, dom, obj, act, eft, cond]. Policies are never persisted to
+// a casbin_rule table.
+//
+// Rule taxonomy (priority ladder, see ModelText):
+//
+//	super_admin wildcard:  [1,  role:super_admin, *,          *,  *,  allow, ""]
+//	role_resources:        [45|50, role:{code}, app:{key}, code, *, effect, ""]
+//	account_grants:        [20|30, account:{id}, app:{key}, code, *, effect, ""]
+//	custom_rules (active): [row,  *,            app:{key}, *,    *,  effect, expr]
+//	client_credentials:    [60,  client:{id},   app:{key},  *,    *,  allow,  ""]
 //
 // M4 addition: every ACTIVE oauth_clients row with the client_credentials
-// grant is translated into a full-access rule for its OWN app:
-//
-//	p, client:{client_id}, app:{appKey}, *, *
-//
-// (documented M4 decision: service tokens get full access to their own app's
-// resources by default; tighten later via per-client scope policies).
+// grant is translated into a full-access rule for its OWN app (documented
+// M4 decision: service tokens get full access to their own app's resources
+// by default; tighten later via per-client scope policies).
 type Loader struct {
 	roleRepo         repository.RoleRepo
 	roleResourceRepo repository.RoleResourceRepo
 	accountRoleRepo  repository.AccountRoleRepo
 	accountGrantRepo repository.AccountGrantRepo
 	oauthClientRepo  repository.OAuthClientRepo
+	customRuleRepo   repository.CustomRuleRepo
 	appRepo          repository.AppRepo
 }
 
@@ -55,6 +64,7 @@ func NewLoader(
 	accountRoleRepo repository.AccountRoleRepo,
 	accountGrantRepo repository.AccountGrantRepo,
 	oauthClientRepo repository.OAuthClientRepo,
+	customRuleRepo repository.CustomRuleRepo,
 	appRepo repository.AppRepo,
 ) *Loader {
 	return &Loader{
@@ -63,8 +73,20 @@ func NewLoader(
 		accountRoleRepo:  accountRoleRepo,
 		accountGrantRepo: accountGrantRepo,
 		oauthClientRepo:  oauthClientRepo,
+		customRuleRepo:   customRuleRepo,
 		appRepo:          appRepo,
 	}
+}
+
+// effectPriority maps an effect onto its ladder value; an unknown effect
+// fails safe to the deny position (a deny ladder value with an allow eft is
+// still filtered below by the matcher, and the CRUD layer validates the
+// column anyway).
+func effectPriority(effect string, allow, deny int) int {
+	if effect == EffectDeny {
+		return deny
+	}
+	return allow
 }
 
 // LoadPolicy rebuilds the complete policy set in the given model. Casbin
@@ -79,7 +101,13 @@ func (l *Loader) LoadPolicy(m model.Model) error {
 		return fmt.Errorf("load super_admin role: %w", err)
 	}
 	if superAdmin != nil {
-		if err := addRule(m, "p", "p", []string{RolePrefix + superAdmin.Code, DomWildcard, DomWildcard, ActWildcard}); err != nil {
+		rule := []string{
+			strconv.Itoa(PrioritySuperAdmin),
+			RolePrefix + superAdmin.Code,
+			DomWildcard, DomWildcard, DomWildcard,
+			EffectAllow, "",
+		}
+		if err := addRule(m, "p", "p", rule); err != nil {
 			return err
 		}
 	}
@@ -93,13 +121,16 @@ func (l *Loader) LoadPolicy(m model.Model) error {
 	if err := l.loadAccountGrantRules(m, now); err != nil {
 		return err
 	}
+	if err := l.loadCustomRules(m); err != nil {
+		return err
+	}
 	return l.loadServiceClientRules(m)
 }
 
 // loadServiceClientRules emits one wildcard p rule per active
 // client_credentials oauth client:
 //
-//	p, client:{client_id}, app:{client app key}, *, *
+//	[60, client:{client_id}, app:{client app key}, *, *, allow, ""]
 func (l *Loader) loadServiceClientRules(m model.Model) error {
 	if l.oauthClientRepo == nil {
 		return nil
@@ -118,7 +149,13 @@ func (l *Loader) loadServiceClientRules(m model.Model) error {
 		if app == "" {
 			continue
 		}
-		rule := []string{SubjectPrefixClient + client.Id, DomPrefixApp + app, DomWildcard, ActWildcard}
+		rule := []string{
+			strconv.Itoa(PriorityClient),
+			SubjectPrefixClient + client.Id,
+			DomPrefixApp + app,
+			DomWildcard, DomWildcard,
+			EffectAllow, "",
+		}
 		if err := addRule(m, "p", "p", rule); err != nil {
 			return err
 		}
@@ -143,10 +180,10 @@ func (l *Loader) appOfClient(appID string) (string, error) {
 
 // loadRoleResourceRules emits p rules from role_resources:
 //
-//	p, role:{code}, app:{resource app key}, {resource code}, *
+//	[45|50, role:{code}, app:{resource app key}, {resource code}, *, effect, ""]
 //
-// act is always "*" in M1-M3 (effect=deny is reserved for M6). The
-// super_admin wildcard was already emitted above.
+// The effect column (allow|deny) is enforced since M6. The super_admin
+// wildcard was already emitted above.
 func (l *Loader) loadRoleResourceRules(m model.Model) error {
 	rows, err := l.roleResourceRepo.ListPolicyRows(context.Background())
 	if err != nil {
@@ -162,7 +199,20 @@ func (l *Loader) loadRoleResourceRules(m model.Model) error {
 		if row.RoleScope == domain.RoleScopeApp && row.RoleAppID != row.ResourceAppID {
 			continue
 		}
-		rule := []string{RolePrefix + row.RoleCode, DomPrefixApp + row.ResourceAppKey, row.ResourceCode, ActWildcard}
+		effect := row.Effect
+		if effect != EffectAllow && effect != EffectDeny {
+			log.Warn().Any("effect", effect).Any("role", row.RoleCode).Msg("role_resources row has unknown effect (skipped)")
+			continue
+		}
+		rule := []string{
+			strconv.Itoa(effectPriority(effect, PriorityRoleAllow, PriorityRoleDeny)),
+			RolePrefix + row.RoleCode,
+			DomPrefixApp + row.ResourceAppKey,
+			row.ResourceCode,
+			ActWildcard,
+			effect,
+			"",
+		}
 		if err := addRule(m, "p", "p", rule); err != nil {
 			return err
 		}
@@ -203,7 +253,7 @@ func (l *Loader) loadAccountRoleRules(m model.Model, now time.Time) error {
 
 // loadAccountGrantRules emits p rules from account_grants:
 //
-//	p, account:{id}, app:{resource app key}, {resource code}, *
+//	[20|30, account:{id}, app:{resource app key}, {resource code}, *, effect, ""]
 func (l *Loader) loadAccountGrantRules(m model.Model, now time.Time) error {
 	rows, err := l.accountGrantRepo.ListPolicyRows(context.Background())
 	if err != nil {
@@ -213,7 +263,62 @@ func (l *Loader) loadAccountGrantRules(m model.Model, now time.Time) error {
 		if row.ExpiresAt != nil && row.ExpiresAt.Before(now) {
 			continue
 		}
-		rule := []string{SubjectPrefixAccount + row.AccountID, DomPrefixApp + row.ResourceAppKey, row.ResourceCode, ActWildcard}
+		effect := row.Effect
+		if effect != EffectAllow && effect != EffectDeny {
+			log.Warn().Any("effect", effect).Any("account", row.AccountID).Msg("account_grants row has unknown effect (skipped)")
+			continue
+		}
+		rule := []string{
+			strconv.Itoa(effectPriority(effect, PriorityGrantAllow, PriorityGrantDeny)),
+			SubjectPrefixAccount + row.AccountID,
+			DomPrefixApp + row.ResourceAppKey,
+			row.ResourceCode,
+			ActWildcard,
+			effect,
+			"",
+		}
+		if err := addRule(m, "p", "p", rule); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadCustomRules emits p rules from ACTIVE custom_rules rows:
+//
+//	[{priority}, *, app:{key}, *, *, effect, expr]
+//
+// A rule whose expression fails to compile is SKIPPED with a warning instead
+// of failing the whole load (the admin CRUD validates expressions at
+// write time, so this only guards legacy/manual rows). Rows that compile but
+// fail at evaluation time fail closed inside the matcher.
+func (l *Loader) loadCustomRules(m model.Model) error {
+	if l.customRuleRepo == nil {
+		return nil
+	}
+	rows, err := l.customRuleRepo.ListPolicyRows(context.Background())
+	if err != nil {
+		return fmt.Errorf("load custom_rules: %w", err)
+	}
+	for _, row := range rows {
+		if _, err := compileExpr(row.Expr); err != nil {
+			log.Warn().Any("error", err).Any("app_key", row.AppKey).Msg("custom rule expression failed to compile (skipped, fail-closed)")
+			continue
+		}
+		effect := row.Effect
+		if effect != EffectAllow && effect != EffectDeny {
+			log.Warn().Any("effect", effect).Any("app_key", row.AppKey).Msg("custom rule has unknown effect (skipped)")
+			continue
+		}
+		rule := []string{
+			strconv.Itoa(row.Priority),
+			DomWildcard,
+			DomPrefixApp + row.AppKey,
+			DomWildcard,
+			DomWildcard,
+			effect,
+			row.Expr,
+		}
 		if err := addRule(m, "p", "p", rule); err != nil {
 			return err
 		}

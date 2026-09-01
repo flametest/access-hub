@@ -104,6 +104,7 @@ type TestContainer struct {
 	oauthRefreshRepo repository.OAuthRefreshTokenRepo
 	totpSecretRepo   repository.TOTPSecretRepo
 	identityRepo     repository.IdentityRepo
+	customRuleRepo   repository.CustomRuleRepo
 
 	// SocialVal is the social provider registry the services see. Tests may
 	// replace it (e.g. with injectable endpoints pointing at a local fake)
@@ -176,6 +177,7 @@ func New(t *testing.T) *TestContainer {
 		repository.NewAccountRoleRepo(db),
 		repository.NewAccountGrantRepo(db),
 		repository.NewOAuthClientRepo(db),
+		repository.NewCustomRuleRepo(db),
 		repository.NewAppRepo(db),
 	)
 	enf, err := casbinx.NewEnforcer(loader)
@@ -207,6 +209,7 @@ func New(t *testing.T) *TestContainer {
 		oauthRefreshRepo: repository.NewOAuthRefreshTokenRepo(db),
 		totpSecretRepo:   repository.NewTOTPSecretRepo(db),
 		identityRepo:     repository.NewIdentityRepo(db),
+		customRuleRepo:   repository.NewCustomRuleRepo(db),
 	}
 	tc.SocialVal = social.NewRegistry(cfg.Social)
 	return tc
@@ -238,6 +241,7 @@ func (tc *TestContainer) OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRep
 }
 func (tc *TestContainer) TOTPSecretRepo() repository.TOTPSecretRepo { return tc.totpSecretRepo }
 func (tc *TestContainer) IdentityRepo() repository.IdentityRepo     { return tc.identityRepo }
+func (tc *TestContainer) CustomRuleRepo() repository.CustomRuleRepo { return tc.customRuleRepo }
 func (tc *TestContainer) SocialRegistry() map[string]social.Provider {
 	return tc.SocialVal
 }
@@ -545,4 +549,20 @@ var schemaDDL = []string{
 	)`,
 	`CREATE UNIQUE INDEX uq_identities_provider_uid ON identities (provider, provider_user_id) WHERE deleted_at IS NULL`,
 	`CREATE INDEX idx_identities_user ON identities (user_id) WHERE deleted_at IS NULL`,
+	// M6 tables (mirror migration/0004_m6.sql).
+	`CREATE TABLE custom_rules (
+		id TEXT PRIMARY KEY,
+		version INTEGER NOT NULL DEFAULT 0,
+		app_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		expr TEXT NOT NULL,
+		effect TEXT NOT NULL DEFAULT 'allow',
+		priority INTEGER NOT NULL DEFAULT 40,
+		status TEXT NOT NULL DEFAULT 'active',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at DATETIME
+	)`,
+	`CREATE UNIQUE INDEX uq_custom_rules_app_name ON custom_rules (app_id, name) WHERE deleted_at IS NULL`,
+	`CREATE INDEX idx_custom_rules_app ON custom_rules (app_id) WHERE deleted_at IS NULL`,
 }

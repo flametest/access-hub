@@ -272,13 +272,13 @@ func (s *adminResourceServiceImpl) removeResourceRules(ctx context.Context, reso
 			if role.Scope == domain.RoleScopeApp && role.AppID != resource.AppID {
 				continue
 			}
-			_ = syncRoleResourceRule(ctx, s.c, role, app.Key, resource.Code, false)
+			_ = syncRoleResourceRule(ctx, s.c, role, app.Key, resource.Code, b.Effect, false)
 		}
 	}
 	grants, err := s.c.AccountGrantRepo().ListByResource(ctx, resource.Id)
 	if err == nil {
 		for _, g := range grants {
-			_ = syncGrantRule(ctx, s.c, g.AccountID, app.Key, resource.Code, false)
+			_ = syncGrantRule(ctx, s.c, g.AccountID, app.Key, resource.Code, g.Effect, false)
 		}
 	}
 	return nil

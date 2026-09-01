@@ -13,6 +13,7 @@ import (
 	"github.com/flametest/access-hub/internal/domain"
 	casbinx "github.com/flametest/access-hub/internal/infra/casbin"
 	"github.com/flametest/access-hub/internal/infra/model"
+	"github.com/flametest/access-hub/internal/infra/repository"
 	"github.com/flametest/access-hub/internal/service"
 	"github.com/flametest/vita/verrors"
 	"github.com/flametest/vita/vgorm"
@@ -80,15 +81,24 @@ func AdminResourceDefs() []AdminResourceDef {
 		{Code: "admin:oauthclient:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/oauth-clients", Name: "Create oauth client"},
 		{Code: "admin:oauthclient:manage", Method: "PATCH", Path: "/api/v1/admin/apps/{appKey}/oauth-clients/{clientId}", Name: "Update oauth client"},
 		{Code: "admin:oauthclient:manage", Method: "DELETE", Path: "/api/v1/admin/apps/{appKey}/oauth-clients/{clientId}", Name: "Delete oauth client"},
+		// custom rules (M6; app-scoped -> org_admin auto-binds)
+		{Code: "admin:customrule:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/custom-rules", Name: "List custom rules"},
+		{Code: "admin:customrule:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/custom-rules", Name: "Create custom rule"},
+		{Code: "admin:customrule:manage", Method: "PATCH", Path: "/api/v1/admin/apps/{appKey}/custom-rules/{ruleId}", Name: "Update custom rule"},
+		{Code: "admin:customrule:manage", Method: "DELETE", Path: "/api/v1/admin/apps/{appKey}/custom-rules/{ruleId}", Name: "Delete custom rule"},
+		{Code: "admin:customrule:read", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/custom-rules/test", Name: "Test custom rule"},
 		// audit logs
 		{Code: "admin:audit:read", Method: "GET", Path: "/api/v1/admin/audit-logs", Name: "List audit logs"},
+		{Code: "admin:audit:read", Method: "GET", Path: "/api/v1/admin/audit-logs/summary", Name: "Audit summary"},
 	}
 }
 
 // adminPlatformCodePrefixes are the platform-only code families, never bound
 // to org_admin. Every other admin code (admin:app:*, admin:account:*,
 // admin:invitation:*, admin:resource:*, admin:role:*, admin:grant:*,
-// admin:oauthclient:*) is app-scoped and org_admin gets it.
+// admin:oauthclient:*, admin:customrule:*) is app-scoped and org_admin gets
+// it (note: admin:audit:* stays platform-only, so admin:customrule:* is NOT
+// swallowed by that family).
 var adminPlatformCodePrefixes = []string{"admin:org:", "admin:user:", "admin:audit:"}
 
 // adminResourceCodePlatform reports whether a code is platform-only (never
@@ -221,7 +231,11 @@ func SyncAdminResources(ctx context.Context, c container.Container) error {
 		}
 	}
 	if changed {
-		if err := c.RoleResourceRepo().ReplaceForRole(ctx, orgAdmin.Id, desired); err != nil {
+		items := make([]repository.RoleResourceItem, 0, len(desired))
+		for _, id := range desired {
+			items = append(items, repository.RoleResourceItem{ResourceID: id, Effect: casbinx.EffectAllow})
+		}
+		if err := c.RoleResourceRepo().ReplaceForRole(ctx, orgAdmin.Id, items); err != nil {
 			return verrors.Wrap(err, "sync admin resources: rebind org_admin")
 		}
 	}

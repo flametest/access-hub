@@ -481,6 +481,7 @@ func (s *adminAccountServiceImpl) ListGrants(ctx context.Context, actor *AdminAc
 			ResourceCode: row.ResourceCode,
 			ResourceName: row.ResourceName,
 			ResourceType: row.ResourceType,
+			Effect:       row.Grant.Effect,
 			GrantedBy:    grantedBy,
 			GrantedAt:    row.Grant.GrantedAt,
 			ExpiresAt:    row.Grant.ExpiresAt,
@@ -489,12 +490,19 @@ func (s *adminAccountServiceImpl) ListGrants(ctx context.Context, actor *AdminAc
 	return out, nil
 }
 
+// AddGrant grants (effect=allow) or blocks (effect=deny) one resource for an
+// account. Deny grants sit above role allows in the priority ladder, so they
+// win over every role binding.
 func (s *adminAccountServiceImpl) AddGrant(ctx context.Context, actor *AdminActor, appKey, accountID string, req *dto.AddGrantReq) (*dto.GrantItem, error) {
 	app, err := actor.accessibleApp(ctx, s.c, appKey)
 	if err != nil {
 		return nil, err
 	}
 	account, err := s.resolveAccount(ctx, app, accountID)
+	if err != nil {
+		return nil, err
+	}
+	effect, err := normalizeBindingEffect(req.Effect)
 	if err != nil {
 		return nil, err
 	}
@@ -508,19 +516,22 @@ func (s *adminAccountServiceImpl) AddGrant(ctx context.Context, actor *AdminActo
 	if resource.AppID != app.Id {
 		return nil, verrors.BadRequestError("resource does not belong to the app")
 	}
-	if err := s.c.AccountGrantRepo().Add(ctx, account.Id, resource.Id, actor.AccountID, req.ExpiresAt); err != nil {
+	grantID, err := s.c.AccountGrantRepo().Add(ctx, account.Id, resource.Id, actor.AccountID, effect, req.ExpiresAt)
+	if err != nil {
 		return nil, verrors.Wrap(err, "add grant")
 	}
-	_ = syncGrantRule(ctx, s.c, account.Id, app.Key, resource.Code, true)
+	_ = syncGrantRule(ctx, s.c, account.Id, app.Key, resource.Code, effect, true)
 	_ = casbinNotify(ctx, s.c, []string{app.Key})
 	writeAudit(ctx, s.c, ActorAccount, actor.AccountID, app.OrgID, AuditGrantAdded, "account", account.Id,
-		map[string]any{"resource": resource.Code}, "", "")
+		map[string]any{"resource": resource.Code, "effect": effect}, "", "")
 	return &dto.GrantItem{
+		ID:           grantID,
 		AccountID:    account.Id,
 		ResourceID:   resource.Id,
 		ResourceCode: resource.Code,
 		ResourceName: resource.Name,
 		ResourceType: resource.Type,
+		Effect:       effect,
 		GrantedBy:    actor.AccountID,
 		GrantedAt:    time.Now(),
 		ExpiresAt:    req.ExpiresAt,
@@ -556,9 +567,9 @@ func (s *adminAccountServiceImpl) RemoveGrant(ctx context.Context, actor *AdminA
 		}
 		return verrors.Wrap(err, "remove grant")
 	}
-	_ = syncGrantRule(ctx, s.c, account.Id, app.Key, resource.Code, false)
+	_ = syncGrantRule(ctx, s.c, account.Id, app.Key, resource.Code, grant.Effect, false)
 	_ = casbinNotify(ctx, s.c, []string{app.Key})
 	writeAudit(ctx, s.c, ActorAccount, actor.AccountID, app.OrgID, AuditGrantRemoved, "account", account.Id,
-		map[string]any{"resource": resource.Code}, "", "")
+		map[string]any{"resource": resource.Code, "effect": grant.Effect}, "", "")
 	return nil
 }
