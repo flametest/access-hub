@@ -168,6 +168,12 @@ func (s *adminOAuthClientServiceImpl) Create(ctx context.Context, actor *AdminAc
 		return nil, verrors.Wrap(err, "create oauth client")
 	}
 	resp.OAuthClientItem = s.toItem(row, app.Key)
+	// A freshly created client_credentials client only becomes an enforceable
+	// service principal after the loader picks it up: broadcast a reload and
+	// bump the app's policy version (invalidates downstream authz caches).
+	if err := casbinNotify(ctx, s.c, []string{app.Key}); err != nil {
+		return nil, verrors.Wrap(err, "notify policy reload")
+	}
 	writeAudit(ctx, s.c, ActorIdentity, actor.IdentityID, app.OrgID, AuditOAuthClientCreated, "oauth_client", row.Id,
 		map[string]any{"app_key": app.Key, "client_type": row.ClientType, "grant_types": req.GrantTypes}, "", "")
 	return resp, nil

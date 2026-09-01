@@ -44,3 +44,6 @@ compose-down: ## stop the dev stack
 
 smoke: ## end-to-end smoke against a running server on :8080
 	@bash scripts/smoke.sh
+
+smoke-m4: ## M4 smoke (2FA + OIDC) against a running server; restores admin 2FA state
+	@python3 scripts/m4_smoke.py
