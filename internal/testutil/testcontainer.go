@@ -24,6 +24,7 @@ import (
 	"github.com/flametest/access-hub/internal/infra/mailer"
 	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/access-hub/internal/infra/repository"
+	"github.com/flametest/access-hub/internal/infra/social"
 	"github.com/flametest/vita/vgorm"
 	log "github.com/flametest/vita/vlog"
 	"github.com/flametest/vita/vserver"
@@ -102,6 +103,12 @@ type TestContainer struct {
 	oauthClientRepo  repository.OAuthClientRepo
 	oauthRefreshRepo repository.OAuthRefreshTokenRepo
 	totpSecretRepo   repository.TOTPSecretRepo
+	identityRepo     repository.IdentityRepo
+
+	// SocialVal is the social provider registry the services see. Tests may
+	// replace it (e.g. with injectable endpoints pointing at a local fake)
+	// before exercising the flows.
+	SocialVal map[string]social.Provider
 }
 
 var _ container.Container = (*TestContainer)(nil)
@@ -199,7 +206,9 @@ func New(t *testing.T) *TestContainer {
 		oauthClientRepo:  repository.NewOAuthClientRepo(db),
 		oauthRefreshRepo: repository.NewOAuthRefreshTokenRepo(db),
 		totpSecretRepo:   repository.NewTOTPSecretRepo(db),
+		identityRepo:     repository.NewIdentityRepo(db),
 	}
+	tc.SocialVal = social.NewRegistry(cfg.Social)
 	return tc
 }
 
@@ -228,6 +237,10 @@ func (tc *TestContainer) OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRep
 	return tc.oauthRefreshRepo
 }
 func (tc *TestContainer) TOTPSecretRepo() repository.TOTPSecretRepo { return tc.totpSecretRepo }
+func (tc *TestContainer) IdentityRepo() repository.IdentityRepo     { return tc.identityRepo }
+func (tc *TestContainer) SocialRegistry() map[string]social.Provider {
+	return tc.SocialVal
+}
 
 // Close is a no-op for tests (cleanup is registered per resource).
 func (tc *TestContainer) Close() {}
@@ -514,4 +527,22 @@ var schemaDDL = []string{
 	)`,
 	`CREATE UNIQUE INDEX uq_oauth_refresh_hash ON oauth_refresh_tokens (token_hash) WHERE deleted_at IS NULL`,
 	`CREATE UNIQUE INDEX uq_totp_user ON totp_secrets (user_id) WHERE deleted_at IS NULL`,
+	// M5 tables (mirror migration/0003_m5.sql).
+	`CREATE TABLE identities (
+		id TEXT PRIMARY KEY,
+		version INTEGER NOT NULL DEFAULT 0,
+		user_id TEXT NOT NULL,
+		provider TEXT NOT NULL,
+		provider_user_id TEXT NOT NULL,
+		email TEXT,
+		email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+		display_name TEXT,
+		avatar_url TEXT,
+		raw_profile TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		deleted_at DATETIME
+	)`,
+	`CREATE UNIQUE INDEX uq_identities_provider_uid ON identities (provider, provider_user_id) WHERE deleted_at IS NULL`,
+	`CREATE INDEX idx_identities_user ON identities (user_id) WHERE deleted_at IS NULL`,
 }

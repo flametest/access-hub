@@ -42,11 +42,12 @@ The dev server listens on port **3000** (`PORT` env to change). `bun run lint` /
 
 | Route | Purpose | API calls |
 |---|---|---|
-| `/login` | Company ID sign-in, 2FA step, SSO `next` redirect (+ disabled Google/Microsoft) | `POST /auth/login`, `POST /auth/login/2fa` |
+| `/login` | Company ID sign-in, 2FA step, SSO `next` redirect, social provider buttons | `POST /auth/login`, `POST /auth/login/2fa`, `GET /auth/social/{provider}/start` |
+| `/social/complete` | social provider callback landing (login + link modes) | `POST /auth/social/complete` |
 | `/register` | Create Company ID, auto-login | `POST /auth/register` |
 | `/forgot-password` | email → code → new password | `POST /auth/email/code`, `POST /auth/password/reset` |
 | `/workspaces` | workspace picker ("Welcome back") | `GET /me/workspaces`, `POST /me/workspaces/{accountId}/token` |
-| `/identity` | primary identity + 2FA status + linked accounts | `GET /me`, `GET /me/2fa/status`, `GET /me/workspaces` |
+| `/identity` | primary identity + 2FA status + connected accounts + linked accounts | `GET /me`, `GET /me/2fa/status`, `GET /me/workspaces`, `GET /me/social-identities`, `DELETE /me/social-identities/{id}` |
 | `/identity/2fa` | TOTP enrollment wizard / 2FA management | `GET /me/2fa/status`, `POST /me/2fa/enroll`, `POST /me/2fa/confirm`, `POST /me/2fa/disable` |
 | `/workspace/[accountId]` | workspace detail (access & role, sign-in methods) | `GET /me/workspaces/{accountId}`, `GET /me/signin-methods` |
 | `/invite` | redeem invitation (works signed-in or anonymous) | `POST /invitations/redeem`, `POST /invitations/accept` |
@@ -75,6 +76,65 @@ Optional hardening for the primary identity, per `docs/design.md` §12 M4:
 - `GET /me` carries `two_fa_enabled`; authoritative state comes from
   `GET /me/2fa/status` → `{enabled, confirmed}`.
 
+## Social login (Google / Microsoft / Facebook / Apple)
+
+Per `docs/design.md` §12 M5, the four provider buttons on `/login` (2×2 grid:
+Google and Microsoft in the secondary style, Apple black, Facebook `#1877F2`)
+kick off a **full-page browser navigation** — never a fetch — to
+
+```
+GET {API_ORIGIN}/api/v1/auth/social/{provider}/start?redirect=<portal path>&mode=login
+```
+
+The API origin (not the portal's same-origin rewrite) is used because the whole
+flow hops through the provider and back; the `ah.session` cookie is host-wide,
+so the backend can identify the caller on `mode=link` starts. The `redirect`
+carries the validated SSO `next` target when it is a same-origin relative path,
+otherwise `/workspaces`.
+
+The provider callback lands back on the portal at **`/social/complete`** with
+exactly one of:
+
+- `?login_code=<code>` (login success) — the page exchanges it once via
+  `POST /auth/social/complete {login_code}`:
+  - **token pair** → `applySession` (localStorage + `ah.session` cookie) and
+    the usual post-login redirect (honors a `next`/`redirect` param passed
+    through the hop); when the response includes
+    `pending_invitations: [{app_key, app_name}]` (workspace invites matched by
+    the verified provider email), a "You may have pending invitations" strip
+    with one link to `/invite` per invitation is shown first and the
+    auto-redirect (~1.5s) is **deferred**: it fires only if the strip is never
+    touched, and any interaction with the strip cancels it (a Continue button
+    navigates immediately).
+  - **`{mfa_required: true, mfa_token}`** → the same 2FA second step as
+    password login (shared `components/mfa-code-step.tsx`); the code posts to
+    `POST /auth/login/2fa`, then session + redirect as above.
+- `?linked=1` (link success) — "Account linked" card linking to `/identity`.
+- `?error=<reason>` — error card with friendly copy:
+  `not_registered` ("…create a Company ID first or ask for an invite"),
+  `already_linked`, `invalid_state` (session expired), `account_disabled`,
+  `provider_error` (generic); unknown/missing params get a generic
+  "This link has expired" card with a back-to-`/login` button.
+
+## Linking and unlinking providers
+
+The **Connected accounts** card on `/identity` lists the social credentials
+linked to the Company ID (`GET /me/social-identities`: provider icon, email,
+verified chip, linked date):
+
+- **Connect** buttons are rendered for every provider not linked yet
+  (`mode=link`, `redirect=/social/complete`). Whether a provider is configured
+  is server-side knowledge, so the portal probes the start endpoint through the
+  same-origin rewrite first (`fetch` with `redirect: "manual"`) and surfaces a
+  missing provider (404) as an error toast instead of a raw backend page;
+  success leaves the portal for the provider's consent screen.
+- **Unlink** is a two-step confirm (Unlink → Confirm unlink / Cancel) calling
+  `DELETE /me/social-identities/{id}`. A **409** — unlinking the last
+  remaining sign-in method — is rejected and the backend's message is shown as
+  an error toast.
+- `GET /me/signin-methods` includes the social entries; the workspace detail
+  page's sign-in methods card renders them with the provider brand marks.
+
 ## SSO `next` contract
 
 The backend's OIDC browser flow (`GET /oauth2/authorize`) 302s anonymous users
@@ -90,8 +150,9 @@ into the portal at `/login?next=<target>`:
 - Anything else (off-site URLs, other schemes, empty) is ignored and the user
   lands on `/workspaces`.
 
-After a successful login (including the 2FA step), registration, and
-invite auto-login, the portal also writes a lightweight **`ah.session` cookie**
+After a successful login (including the 2FA step, password or social),
+registration, and invite auto-login, the portal also writes a lightweight
+**`ah.session` cookie**
 (`value = access token`, `SameSite=Lax`, `Path=/`, non-HttpOnly — JS cannot set
 HttpOnly, so it carries no privilege beyond what localStorage already holds)
 whose `Max-Age` mirrors the access token's `exp` claim. The backend browser flow
@@ -121,8 +182,8 @@ refresh rotation, and session expiry.
 
 - Dev mail driver: password-reset codes are printed to the **backend server log**;
   the forgot-password page shows a dismissible hint about it.
-- Google/Microsoft social login is still a disabled placeholder (M5 per
-  `docs/design.md` §12). OIDC client management screens are admin-side and out of
-  scope for the portal.
+- Social login runs entirely through the backend's `start` → provider →
+  callback redirect chain (see "Social login" above); OIDC client management
+  screens are admin-side and out of scope for the portal.
 - Workspace accounts are **linked automatically** when you accept an invite;
-  there is no manual link/unlink flow (v6 design).
+  social accounts are linked/unlinked explicitly from `/identity` (v6 design).

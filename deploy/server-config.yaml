@@ -40,6 +40,22 @@ Mailer:
     username: ""
     password: ""
     from: no-reply@access-hub.local
+Social:
+  google:
+    clientId: ""
+    clientSecret: ""
+  microsoft:
+    clientId: ""
+    clientSecret: ""
+    tenant: common
+  facebook:
+    clientId: ""
+    clientSecret: ""
+  apple:
+    servicesId: ""
+    teamId: ""
+    keyId: ""
+    privateKeyPath: deploy/keys/apple/AuthKey.p8
 Bootstrap:
   adminUsername: admin
   adminEmail: admin@access-hub.local

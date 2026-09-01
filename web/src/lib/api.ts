@@ -4,6 +4,8 @@ import {
   toMe,
   toMfaChallenge,
   toSignInMethods,
+  toSocialComplete,
+  toSocialIdentities,
   toTokenPair,
   toTwoFaEnroll,
   toTwoFaStatus,
@@ -23,6 +25,8 @@ import type {
   ResetPasswordReq,
   SendEmailCodeReq,
   SignInMethod,
+  SocialCompleteResult,
+  SocialIdentity,
   TokenPair,
   TwoFaDisableReq,
   TwoFaEnroll,
@@ -84,7 +88,13 @@ function toMessage(
   return "Something went wrong. Please try again.";
 }
 
-const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/invite"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/register",
+  "/forgot-password",
+  "/invite",
+  "/social/complete",
+];
 
 /** Clears the session; redirects to /login unless we're already on a public page. */
 function sessionExpired(): void {
@@ -273,6 +283,40 @@ export const api = {
     }
     return pair;
   },
+
+  /**
+   * Exchanges the one-time `login_code` from the provider callback
+   * (/social/complete?login_code=…) for a session: either a token pair (plus
+   * optional email-matched pending invitations) or the 2FA challenge —
+   * continue with verify2fa.
+   */
+  socialComplete: async (loginCode: string): Promise<SocialCompleteResult> => {
+    const result = toSocialComplete(
+      await request<unknown>("/auth/social/complete", {
+        method: "POST",
+        body: { login_code: loginCode },
+        auth: false,
+      }),
+    );
+    if (!result.pair && !result.challenge) {
+      throw new ApiError(
+        "Signed in, but the server returned no session. Please try again.",
+        500,
+        1500,
+      );
+    }
+    return result;
+  },
+
+  /** Social credentials linked to the primary identity. */
+  listSocialIdentities: async (): Promise<SocialIdentity[]> =>
+    toSocialIdentities(await request<unknown>("/me/social-identities")),
+
+  /** Unlinks a social credential; 409 when it's the last sign-in method. */
+  deleteSocialIdentity: (id: string): Promise<void> =>
+    request<void>(`/me/social-identities/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 
   /** TOTP enrollment state for the signed-in identity. */
   get2faStatus: async (): Promise<TwoFaStatus> =>

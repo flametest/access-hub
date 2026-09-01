@@ -25,6 +25,7 @@ type Config struct {
 	Redis      *vredis.Config           `yaml:"Redis"`
 	Auth       AuthConfig               `yaml:"Auth"`
 	Mailer     MailerConfig             `yaml:"Mailer"`
+	Social     SocialConfig             `yaml:"Social"`
 	Bootstrap  BootstrapConfig          `yaml:"Bootstrap"`
 }
 
@@ -60,6 +61,41 @@ type SMTPConfig struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	From     string `yaml:"from"`
+}
+
+// SocialConfig holds per-provider OAuth client credentials. A provider is
+// enabled when its client id (google/microsoft/facebook) or services id
+// (apple) is non-empty. Callbacks land on {Auth.IssuerURL}/api/v1/auth/social/{provider}/callback.
+type SocialConfig struct {
+	Google    GoogleConfig    `yaml:"google"`
+	Microsoft MicrosoftConfig `yaml:"microsoft"`
+	Facebook  FacebookConfig  `yaml:"facebook"`
+	Apple     AppleConfig     `yaml:"apple"`
+}
+
+type GoogleConfig struct {
+	ClientID     string `yaml:"clientId"`
+	ClientSecret string `yaml:"clientSecret"`
+}
+
+type MicrosoftConfig struct {
+	ClientID     string `yaml:"clientId"`
+	ClientSecret string `yaml:"clientSecret"`
+	Tenant       string `yaml:"tenant"` // "common" by default
+}
+
+type FacebookConfig struct {
+	ClientID     string `yaml:"clientId"`
+	ClientSecret string `yaml:"clientSecret"`
+}
+
+// AppleConfig: Sign in with Apple needs an ES256 client_secret JWT minted at
+// request time from the .p8 private key (services_id = Services ID / client_id).
+type AppleConfig struct {
+	ServicesID     string `yaml:"servicesId"`
+	TeamID         string `yaml:"teamId"`
+	KeyID          string `yaml:"keyId"`
+	PrivateKeyPath string `yaml:"privateKeyPath"`
 }
 
 type BootstrapConfig struct {

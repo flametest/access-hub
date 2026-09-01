@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/flametest/access-hub/internal/infra/model"
@@ -19,6 +20,9 @@ type InvitationRepo interface {
 	// surfaces as NotFoundError.
 	FindByCodeHash(ctx context.Context, codeHash string) (*model.Invitation, error)
 	ListByApp(ctx context.Context, appID string) ([]*model.Invitation, error)
+	// ListPendingByEmail returns pending, unexpired invitations for an email
+	// (the social-login "found N workspaces" moment, design.md §12 M5).
+	ListPendingByEmail(ctx context.Context, email string) ([]*model.Invitation, error)
 	UpdateFields(ctx context.Context, id string, fields map[string]any) error
 }
 
@@ -58,6 +62,15 @@ func (r *invitationRepoImpl) ListByApp(ctx context.Context, appID string) ([]*mo
 	err := r.db.WithContext(ctx).
 		Where("app_id = ?", appID).
 		Order("created_at DESC").
+		Find(&out).Error
+	return out, err
+}
+
+func (r *invitationRepoImpl) ListPendingByEmail(ctx context.Context, email string) ([]*model.Invitation, error) {
+	var out []*model.Invitation
+	err := r.db.WithContext(ctx).
+		Where("LOWER(email) = ? AND status = ? AND expires_at > ?", strings.ToLower(strings.TrimSpace(email)), "pending", time.Now()).
+		Order("created_at ASC").
 		Find(&out).Error
 	return out, err
 }

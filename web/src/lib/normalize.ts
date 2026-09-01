@@ -2,7 +2,10 @@ import type {
   InvitationPreview,
   Me,
   MfaChallenge,
+  PendingInvitation,
   SignInMethod,
+  SocialCompleteResult,
+  SocialIdentity,
   TokenPair,
   TwoFaEnroll,
   TwoFaStatus,
@@ -169,6 +172,8 @@ const METHOD_LABELS: Record<string, string> = {
   email: "Email code",
   google: "Google",
   microsoft: "Microsoft",
+  facebook: "Facebook",
+  apple: "Apple",
   totp: "Authenticator app",
   twofa: "Two-factor authentication",
 };
@@ -207,6 +212,64 @@ export function toInvitationPreview(raw: unknown): InvitationPreview {
     invited_by: optStr(r.invited_by, r.invited_by_email, r.inviter),
     expires_at: optStr(r.expires_at, r.expired_at, r.expires),
     auto_provision: Boolean(r.auto_provision ?? r.autoProvision ?? false),
+  };
+}
+
+/** GET /me/social-identities rows. */
+export function toSocialIdentity(raw: unknown): SocialIdentity {
+  const r = asRecord(raw);
+  const provider = str(r.provider, r.type, r.kind).toLowerCase();
+  return {
+    id: str(r.id, r.identity_id, r.identityId),
+    provider: provider || "unknown",
+    email: str(r.email, r.provider_email, r.mail),
+    email_verified: Boolean(
+      r.email_verified ?? r.emailVerified ?? r.verified ?? false,
+    ),
+    display_name: optStr(r.display_name, r.displayName, r.name, r.nickname),
+    created_at: optStr(r.created_at, r.createdAt, r.linked_at, r.linkedAt),
+  };
+}
+
+export function toSocialIdentities(raw: unknown): SocialIdentity[] {
+  return pickList(raw, ["identities", "social_identities", "items", "data"])
+    .map(toSocialIdentity)
+    .filter((identity) => identity.id);
+}
+
+/** Email-matched invitations surfaced after a social sign-in. */
+export function toPendingInvitations(raw: unknown): PendingInvitation[] {
+  return pickList(raw, [
+    "pending_invitations",
+    "pendingInvitations",
+    "invitations",
+  ])
+    .map((item): PendingInvitation => {
+      if (typeof item === "string") {
+        return { app_key: undefined, app_name: item };
+      }
+      const r = asRecord(item);
+      const app = asRecord(r.app);
+      return {
+        app_key: optStr(r.app_key, r.appKey, app.key),
+        app_name:
+          str(r.app_name, r.appName, app.name, r.workspace_name, app.key) ||
+          "Workspace",
+      };
+    })
+    .filter((inv) => inv.app_name);
+}
+
+/**
+ * POST /auth/social/complete: same duality as POST /auth/login — either the
+ * 2FA challenge or a token pair, plus optional email-matched invitations.
+ */
+export function toSocialComplete(raw: unknown): SocialCompleteResult {
+  const r = asRecord(raw);
+  return {
+    challenge: toMfaChallenge(raw),
+    pair: toTokenPair(raw),
+    pending_invitations: toPendingInvitations(r),
   };
 }
 

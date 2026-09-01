@@ -10,6 +10,7 @@ import (
 	"github.com/flametest/access-hub/internal/infra/kv"
 	"github.com/flametest/access-hub/internal/infra/mailer"
 	"github.com/flametest/access-hub/internal/infra/repository"
+	"github.com/flametest/access-hub/internal/infra/social"
 	"github.com/flametest/vita/verrors"
 	"github.com/flametest/vita/vgorm"
 	"github.com/flametest/vita/vredis"
@@ -44,6 +45,11 @@ type Container interface {
 	OAuthClientRepo() repository.OAuthClientRepo
 	OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRepo
 	TOTPSecretRepo() repository.TOTPSecretRepo
+	IdentityRepo() repository.IdentityRepo
+
+	// SocialRegistry returns the configured social login providers keyed by
+	// provider id (disabled providers report Enabled()==false, design.md §12 M5).
+	SocialRegistry() map[string]social.Provider
 
 	// Close releases the watcher, the Redis client and the database pool.
 	Close()
@@ -75,6 +81,8 @@ type containerImpl struct {
 	oauthClientRepo  repository.OAuthClientRepo
 	oauthRefreshRepo repository.OAuthRefreshTokenRepo
 	totpSecretRepo   repository.TOTPSecretRepo
+	identityRepo     repository.IdentityRepo
+	social           map[string]social.Provider
 }
 
 // NewContainer builds every dependency, failing fast on the first error
@@ -117,6 +125,11 @@ func NewContainer(cfg *config.Config) (Container, error) {
 	oauthClientRepo := repository.NewOAuthClientRepo(db)
 	oauthRefreshRepo := repository.NewOAuthRefreshTokenRepo(db)
 	totpSecretRepo := repository.NewTOTPSecretRepo(db)
+	identityRepo := repository.NewIdentityRepo(db)
+
+	// Social login providers built from the global yaml credentials
+	// (providers without credentials report Enabled()==false).
+	socialProviders := social.NewRegistry(cfg.Social)
 
 	// Casbin enforcer over the read-only policy loader.
 	loader := casbinx.NewLoader(roleRepo, roleResourceRepo, accountRoleRepo, accountGrantRepo, oauthClientRepo, appRepo)
@@ -161,6 +174,8 @@ func NewContainer(cfg *config.Config) (Container, error) {
 		oauthClientRepo:  oauthClientRepo,
 		oauthRefreshRepo: oauthRefreshRepo,
 		totpSecretRepo:   totpSecretRepo,
+		identityRepo:     identityRepo,
+		social:           socialProviders,
 	}, nil
 }
 
@@ -189,6 +204,10 @@ func (c *containerImpl) OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRepo
 	return c.oauthRefreshRepo
 }
 func (c *containerImpl) TOTPSecretRepo() repository.TOTPSecretRepo { return c.totpSecretRepo }
+func (c *containerImpl) IdentityRepo() repository.IdentityRepo     { return c.identityRepo }
+func (c *containerImpl) SocialRegistry() map[string]social.Provider {
+	return c.social
+}
 
 // Close releases the watcher (stops pub/sub), the Redis client and the
 // database pool. Safe to call on a partially-initialized container.

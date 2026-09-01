@@ -47,6 +47,16 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 	e.Add(http.MethodPost, "/api/v1/invitations/redeem", auth.OptionalAuth()(h.Redeem))
 	e.Add(http.MethodPost, "/api/v1/invitations/accept", auth.OptionalAuth()(h.Accept))
 
+	// ----- social login (M5; public browser endpoints) -----
+	// start: anonymous for mode=login, identity token for mode=link (the
+	// service answers 401 when the link-mode caller is anonymous).
+	e.Add(http.MethodGet, "/api/v1/auth/social/:provider/start", auth.OptionalAuth()(h.SocialStart))
+	e.Add(http.MethodGet, "/api/v1/auth/social/:provider/callback", h.SocialCallback)
+	e.Add(http.MethodPost, "/api/v1/auth/social/apple/callback", h.AppleCallback)
+	e.Add(http.MethodPost, "/api/v1/auth/social/complete", h.SocialComplete)
+	e.Add(http.MethodGet, "/api/v1/me/social-identities", auth.RequireIdentity()(h.ListSocialIdentities))
+	e.Add(http.MethodDelete, "/api/v1/me/social-identities/:id", auth.RequireIdentity()(h.DeleteSocialIdentity))
+
 	// ----- identity-scoped (center token) -----
 	e.Add(http.MethodGet, "/api/v1/me", auth.RequireIdentity()(h.GetMe))
 	e.Add(http.MethodPatch, "/api/v1/me", auth.RequireIdentity()(h.UpdateMe))

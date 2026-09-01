@@ -423,7 +423,11 @@ func (s *meServiceImpl) SigninMethods(ctx context.Context, userID string) ([]dto
 	if err != nil {
 		return nil, verrors.NotFoundError("identity not found")
 	}
-	methods := make([]dto.SigninMethod, 0, 1)
+	identities, err := s.c.IdentityRepo().ListByUser(ctx, userID)
+	if err != nil {
+		return nil, verrors.Wrap(err, "list social identities")
+	}
+	methods := make([]dto.SigninMethod, 0, 1+len(identities))
 	enabled := user.PasswordHash != nil && *user.PasswordHash != ""
 	detail := ""
 	if enabled {
@@ -435,6 +439,23 @@ func (s *meServiceImpl) SigninMethods(ctx context.Context, userID string) ([]dto
 		Detail:  detail,
 		Enabled: enabled,
 	})
+	// Social bindings (M5): every stored identity is an enabled method.
+	for _, row := range identities {
+		methodDetail := deref(row.Email)
+		if methodDetail == "" {
+			methodDetail = deref(row.DisplayName)
+		}
+		label := domain.SocialProviderLabels[row.Provider]
+		if label == "" {
+			label = row.Provider
+		}
+		methods = append(methods, dto.SigninMethod{
+			Type:    row.Provider,
+			Label:   label,
+			Detail:  methodDetail,
+			Enabled: true,
+		})
+	}
 	return methods, nil
 }
 

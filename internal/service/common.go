@@ -49,6 +49,16 @@ func randomDigits(n int) (string, error) {
 	return fmt.Sprintf("%0*d", n, v.Int64()), nil
 }
 
+// randomHex returns a 2*nBytes-long lowercase hex string (the social login
+// state token and the one-time login_code are 32-hex = 16 bytes).
+func randomHex(nBytes int) (string, error) {
+	buf := make([]byte, nBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
 // normalizeEmail trims and lower-cases an email address.
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
@@ -98,6 +108,10 @@ const (
 	AuditOAuthClientCreated  = "oauth_client_created"
 	AuditOAuthClientUpdated  = "oauth_client_updated"
 	AuditOAuthClientDeleted  = "oauth_client_deleted"
+	// M5 social login events.
+	AuditSocialLinked    = "social_linked"
+	AuditSocialRegister  = "social_register"
+	AuditSocialUnlinked  = "social_unlinked"
 )
 
 // Actor types for audit_logs.actor_type.
@@ -171,6 +185,7 @@ type txRepos struct {
 	grants      repository.AccountGrantRepo
 	sessions    repository.SessionRepo
 	invitations repository.InvitationRepo
+	identities  repository.IdentityRepo
 }
 
 func newTxRepos(tx *gorm.DB) *txRepos {
@@ -187,6 +202,7 @@ func newTxRepos(tx *gorm.DB) *txRepos {
 		grants:      repository.NewAccountGrantRepo(tx),
 		sessions:    repository.NewSessionRepo(tx),
 		invitations: repository.NewInvitationRepo(tx),
+		identities:  repository.NewIdentityRepo(tx),
 	}
 }
 

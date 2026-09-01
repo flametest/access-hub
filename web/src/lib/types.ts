@@ -131,3 +131,37 @@ export interface InvitationPreview {
   expires_at?: string;
   auto_provision: boolean;
 }
+
+/**
+ * Social credential linked to the primary identity —
+ * GET /me/social-identities (design.md §12 M5).
+ */
+export interface SocialIdentity {
+  id: string;
+  /** google | microsoft | facebook | apple */
+  provider: string;
+  email: string;
+  email_verified: boolean;
+  display_name?: string;
+  created_at?: string;
+}
+
+/**
+ * Workspace invite matched by the verified provider email after a social
+ * sign-in (shown as a "pending invitations" strip on /social/complete).
+ */
+export interface PendingInvitation {
+  app_key?: string;
+  app_name: string;
+}
+
+/**
+ * POST /auth/social/complete answer: either a token pair (plus optional
+ * email-matched pending invitations) or the same 2FA challenge as password
+ * login (continue at POST /auth/login/2fa).
+ */
+export interface SocialCompleteResult {
+  pair: TokenPair | null;
+  challenge: MfaChallenge | null;
+  pending_invitations: PendingInvitation[];
+}

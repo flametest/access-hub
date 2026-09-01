@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/button";
 import { Card } from "@/components/card";
 import { Chip, StatusChip } from "@/components/chips";
-import { GoogleIcon, Icon, MicrosoftIcon, methodIcon } from "@/components/icon";
+import { Icon, ProviderIcon } from "@/components/icon";
 import { Initials } from "@/components/initials";
 import { ErrorCard, SkeletonCard } from "@/components/page-state";
 import { PortalShell } from "@/components/portal-shell";
@@ -160,7 +160,8 @@ export default function WorkspaceDetailPage() {
       <Card className="p-5 sm:p-6">
         <h2 className="font-bold">Sign-in methods</h2>
         <p className="mt-0.5 mb-4 text-[13px] text-white/50">
-          Ways this account can sign in. More providers are on the roadmap.
+          Ways this account can sign in — including the social providers linked
+          to your Company ID.
         </p>
 
         {methodsQuery.isLoading && (
@@ -202,13 +203,7 @@ export default function WorkspaceDetailPage() {
                 className="flex items-center gap-3.5 rounded-xl border border-white/10 px-4 py-3.5"
               >
                 <span className="grid size-10 flex-none place-items-center rounded-lg bg-white/[0.07] text-white/70">
-                  {m.method === "google" ? (
-                    <GoogleIcon className="size-5" />
-                  ) : m.method === "microsoft" ? (
-                    <MicrosoftIcon className="size-4" />
-                  ) : (
-                    <Icon name={methodIcon(m.method)} className="size-5" />
-                  )}
+                  <ProviderIcon provider={m.method} className="size-5" />
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-bold">{m.label}</div>

@@ -57,6 +57,8 @@ type Handlers struct {
 	// M4 services.
 	OAuth      service.OAuthService
 	AdminOAuth service.AdminOAuthClientService
+	// M5 social login.
+	Social service.SocialService
 }
 
 // NewHandlers wires all services on top of the container.
@@ -77,6 +79,7 @@ func NewHandlers(c container.Container) *Handlers {
 		AdminAudit: service.NewAdminAuditService(c),
 		OAuth:      service.NewOAuthService(c),
 		AdminOAuth: service.NewAdminOAuthClientService(c),
+		Social:     service.NewSocialService(c),
 	}
 }
 

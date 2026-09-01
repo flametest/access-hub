@@ -3,7 +3,7 @@
 import type { ButtonHTMLAttributes } from "react";
 import { Spinner } from "@/components/spinner";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "danger" | "apple" | "facebook";
 type Size = "sm" | "md";
 
 const VARIANT_CLASSES: Record<Variant, string> = {
@@ -15,6 +15,8 @@ const VARIANT_CLASSES: Record<Variant, string> = {
     "bg-transparent text-white/60 font-bold hover:bg-white/[0.06] hover:text-white",
   danger:
     "bg-white/[0.06] text-[#FF9C86] font-bold border border-[#FF5630]/45 hover:bg-[#FF5630]/10",
+  apple: "bg-black text-white font-bold border border-white/20 hover:bg-[#1C1C1E]",
+  facebook: "bg-[#1877F2] text-white font-bold hover:bg-[#166FE0]",
 };
 
 const SIZE_CLASSES: Record<Size, string> = {
