@@ -11,6 +11,7 @@ import (
 	"github.com/flametest/access-hub/internal/bootstrap"
 	"github.com/flametest/access-hub/internal/config"
 	"github.com/flametest/access-hub/internal/container"
+	"github.com/flametest/access-hub/internal/service"
 	"github.com/flametest/vita/verrors"
 	"github.com/flametest/vita/vlog"
 	"github.com/flametest/vita/vserver"
@@ -42,15 +43,19 @@ func main() {
 		panic(err)
 	}
 
-	// Readiness gate: the HTTP server is "ready" only when the DB is reachable,
-	// so /ready reports 503 if the connection is down (during startup or an
-	// outage) and lets the load balancer stop sending traffic.
+	// Readiness gate: "ready" only when BOTH the database and Redis are
+	// reachable — the denylist, rate limits, policy epoch and watcher all
+	// depend on Redis, so a Redis outage must pull the instance out of the
+	// load-balancer pool (the denylist fails closed by default).
 	ready := func(ctx context.Context) error {
 		sqlDB, err := c.DB().DB()
 		if err != nil {
 			return err
 		}
-		return sqlDB.PingContext(ctx)
+		if err := sqlDB.PingContext(ctx); err != nil {
+			return err
+		}
+		return c.Redis().Redis().Ping(ctx).Err()
 	}
 	srv, err := vserver.NewEchoServer(ctx, &cfg.AppConfig, vserver.WithMetrics(), vserver.WithReadinessCheck(ready))
 	if err != nil {
@@ -68,10 +73,17 @@ func main() {
 	}
 
 	// Idempotent admin dogfood resource sync (constant table -> admin app
-	// resources + org_admin binding + enforcer reload).
+	// resources + org_admin binding + enforcer reload). Fatal on failure,
+	// same as bootstrap: a console with an unsynced permission surface must
+	// not come up half-configured.
 	if err := api.SyncAdminResources(ctx, c); err != nil {
 		log.Error().Any("error", err).Msg("admin resource sync failed")
+		c.Close()
+		panic(err)
 	}
+
+	// Audit-log retention janitor (design §10: configurable, default 180d).
+	go service.RunAuditRetention(ctx, c)
 
 	go func() {
 		_ = srv.Start(ctx)

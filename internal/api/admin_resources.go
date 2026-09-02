@@ -57,24 +57,25 @@ func AdminResourceDefs() []AdminResourceDef {
 		{Code: "admin:account:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/accounts/{accountId}/reset-password", Name: "Reset account password"},
 		{Code: "admin:account:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/accounts/{accountId}/transfer", Name: "Transfer account"},
 		{Code: "admin:account:manage", Method: "PUT", Path: "/api/v1/admin/apps/{appKey}/accounts/{accountId}/roles", Name: "Set account roles"},
-		{Code: "admin:grant:manage", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/accounts/{accountId}/grants", Name: "List account grants"},
+		{Code: "admin:grant:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/accounts/{accountId}/grants", Name: "List account grants"},
 		{Code: "admin:grant:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/accounts/{accountId}/grants", Name: "Add account grant"},
 		{Code: "admin:grant:manage", Method: "DELETE", Path: "/api/v1/admin/apps/{appKey}/accounts/{accountId}/grants/{grantId}", Name: "Remove account grant"},
 		// invitations
 		{Code: "admin:invitation:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/invitations", Name: "Create invitation"},
-		{Code: "admin:invitation:manage", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/invitations", Name: "List invitations"},
+		{Code: "admin:invitation:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/invitations", Name: "List invitations"},
 		{Code: "admin:invitation:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/invitations/{invitationId}/revoke", Name: "Revoke invitation"},
 		// resources
-		{Code: "admin:resource:manage", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/resources", Name: "Resource tree"},
+		{Code: "admin:resource:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/resources", Name: "Resource tree"},
 		{Code: "admin:resource:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/resources", Name: "Create resource"},
 		{Code: "admin:resource:manage", Method: "PATCH", Path: "/api/v1/admin/apps/{appKey}/resources/{resourceId}", Name: "Update resource"},
 		{Code: "admin:resource:manage", Method: "DELETE", Path: "/api/v1/admin/apps/{appKey}/resources/{resourceId}", Name: "Delete resource"},
 		{Code: "admin:resource:manage", Method: "PUT", Path: "/api/v1/admin/apps/{appKey}/resources:batch", Name: "Batch import resources"},
 		// roles
-		{Code: "admin:role:manage", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/roles", Name: "List roles"},
+		{Code: "admin:role:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/roles", Name: "List roles"},
 		{Code: "admin:role:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/roles", Name: "Create role"},
 		{Code: "admin:role:manage", Method: "PATCH", Path: "/api/v1/admin/apps/{appKey}/roles/{roleId}", Name: "Update role"},
 		{Code: "admin:role:manage", Method: "DELETE", Path: "/api/v1/admin/apps/{appKey}/roles/{roleId}", Name: "Delete role"},
+		{Code: "admin:role:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/roles/{roleId}/resources", Name: "List role resources"},
 		{Code: "admin:role:manage", Method: "PUT", Path: "/api/v1/admin/apps/{appKey}/roles/{roleId}/resources", Name: "Set role resources"},
 		// oauth clients (M4; app-scoped -> org_admin auto-binds)
 		{Code: "admin:oauthclient:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/oauth-clients", Name: "List oauth clients"},
@@ -134,6 +135,35 @@ func SyncAdminResources(ctx context.Context, c container.Container) error {
 	byCode := make(map[string]*model.Resource, len(existing))
 	for _, row := range existing {
 		byCode[row.Code] = row
+	}
+
+	// Free the routes first: a def may TAKE OVER a (method, route_path) that
+	// a different code's row still holds (e.g. a code split moving a GET
+	// route from admin:x:manage to admin:x:read). The (app, method,
+	// route_path) unique index would reject the upsert otherwise. The
+	// constant table is authoritative for admin routes, so colliding rows
+	// are soft-deleted outright.
+	for _, def := range defs {
+		defRow := byCode[def.Code]
+		for _, row := range existing {
+			if defRow != nil && row.Id == defRow.Id {
+				continue
+			}
+			if row.Method == nil || row.RoutePath == nil ||
+				*row.Method != def.Method || *row.RoutePath != def.Path {
+				continue
+			}
+			if err := c.ResourceRepo().Delete(ctx, row.Id); err != nil {
+				return verrors.Wrap(err, "sync admin resources: retire route of "+row.Code)
+			}
+			delete(byCode, row.Code)
+			for i := range existing {
+				if existing[i].Id == row.Id {
+					existing = append(existing[:i], existing[i+1:]...)
+					break
+				}
+			}
+		}
 	}
 
 	// Upsert every constant (match by (app, code); update the display fields).

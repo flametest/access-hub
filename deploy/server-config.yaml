@@ -39,6 +39,10 @@ Auth:
   # extraction. Empty = never trust XFF (use the direct peer address).
   trustedProxies: []
   portalURL: http://localhost:3000
+Audit:
+  # audit-log retention (days); <= 0 falls back to the 180-day design default.
+  # The janitor sweeps daily and hard-deletes older rows.
+  retentionDays: 180
 Mailer:
   driver: console
   smtp:

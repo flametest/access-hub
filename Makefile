@@ -30,8 +30,8 @@ keys: ## generate the RS256 keypair used for JWT signing (dev)
 		echo "wrote deploy/keys/{private,public}.pem"; \
 	fi
 
-test: ## run all Go tests
-	go test ./...
+test: ## run all Go tests (race detector on: the core surface is concurrent)
+	go test -race ./...
 
 tidy: ## go mod tidy
 	go mod tidy

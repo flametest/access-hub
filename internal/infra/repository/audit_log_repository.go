@@ -59,6 +59,8 @@ type AuditLogRepo interface {
 	// one org (orgID nil = all orgs); day buckets are formatted as
 	// "YYYY-MM-DD" strings and the actor list is capped to the top five.
 	Summary(ctx context.Context, since time.Time, orgID *string) (*AuditSummary, error)
+	// PurgeBefore hard-deletes rows older than the cutoff (retention janitor).
+	PurgeBefore(ctx context.Context, before time.Time) (int64, error)
 }
 
 type auditLogRepoImpl struct {
@@ -78,6 +80,16 @@ func (r *auditLogRepoImpl) dayExpr() string {
 	default:
 		return "to_char(created_at, 'YYYY-MM-DD')"
 	}
+}
+
+// PurgeBefore deletes audit rows strictly older than the cutoff (hard
+// delete: the retention janitor owns the table's lifetime; soft-deleted rows
+// would defeat the purpose). Returns the number of rows removed.
+func (r *auditLogRepoImpl) PurgeBefore(ctx context.Context, before time.Time) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Where("created_at < ?", before).
+		Delete(&model.AuditLog{})
+	return res.RowsAffected, res.Error
 }
 
 func (r *auditLogRepoImpl) Create(ctx context.Context, entry *model.AuditLog) error {

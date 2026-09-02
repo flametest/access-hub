@@ -28,6 +28,8 @@ type Container interface {
 	// DB returns the underlying *gorm.DB, e.g. for readiness pings.
 	DB() *gorm.DB
 	KV() kv.Store
+	// Redis exposes the underlying client (readiness ping, diagnostics).
+	Redis() vredis.Client
 	Mailer() mailer.Mailer
 	JWT() *jwt.Manager
 	Enforcer() *casbinx.Enforcer
@@ -227,6 +229,8 @@ func (c *containerImpl) OAuthRefreshTokenRepo() repository.OAuthRefreshTokenRepo
 	return c.oauthRefreshRepo
 }
 func (c *containerImpl) TOTPSecretRepo() repository.TOTPSecretRepo { return c.totpSecretRepo }
+
+func (c *containerImpl) Redis() vredis.Client                      { return c.redis }
 func (c *containerImpl) IdentityRepo() repository.IdentityRepo     { return c.identityRepo }
 func (c *containerImpl) CustomRuleRepo() repository.CustomRuleRepo { return c.customRuleRepo }
 func (c *containerImpl) SocialRegistry() map[string]social.Provider {

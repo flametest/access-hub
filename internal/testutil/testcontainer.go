@@ -27,6 +27,7 @@ import (
 	"github.com/flametest/access-hub/internal/infra/social"
 	"github.com/flametest/vita/vgorm"
 	log "github.com/flametest/vita/vlog"
+	"github.com/flametest/vita/vredis"
 	"github.com/flametest/vita/vserver"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -215,8 +216,10 @@ func New(t *testing.T) *TestContainer {
 	return tc
 }
 
-func (tc *TestContainer) Cfg() *config.Config         { return tc.CfgVal }
-func (tc *TestContainer) DB() *gorm.DB                { return tc.DBVal }
+func (tc *TestContainer) Cfg() *config.Config  { return tc.CfgVal }
+func (tc *TestContainer) DB() *gorm.DB         { return tc.DBVal }
+func (tc *TestContainer) Redis() vredis.Client { return nil }
+
 func (tc *TestContainer) KV() kv.Store                { return tc.KVVal }
 func (tc *TestContainer) Mailer() mailer.Mailer       { return tc.Mail }
 func (tc *TestContainer) JWT() *jwt.Manager           { return tc.JWTVal }

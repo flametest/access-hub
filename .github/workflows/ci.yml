@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l . | grep -v web/node_modules || true)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+      - name: build
+        run: go build ./...
+      - name: vet
+        run: go vet ./...
+      - name: test (race)
+        run: go test -race ./...
+        env:
+          CGO_ENABLED: "1"
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: install
+        run: bun install --frozen-lockfile
+      - name: lint
+        run: bunx eslint .
+      - name: build
+        run: bun run build
+        env:
+          # Public API origin baked into the client bundle (same-origin proxy
+          # in every deployment, so a placeholder is fine here).
+          ACCESS_HUB_API_URL: http://localhost:8080

@@ -45,7 +45,7 @@ bootstrap 管理员：`admin` / `ACCESS_HUB_BOOTSTRAP_ADMIN_PASSWORD`（首登�
 |---|---|
 | `make build` | 编译 server + migrate 到 bin/ |
 | `make run` / `make migrate` | 启动服务 / 执行迁移（按文件名幂等） |
-| `make test` | Go 全量测试（sqlite 内存库，无需真实 PG/Redis） |
+| `make test` | Go 全量测试（`-race`；sqlite 内存库，无需真实 PG/Redis） |
 | `make lint` / `make fmt` | golangci-lint / go fmt |
 | `make compose-up` / `compose-down` | 开发容器栈 |
 
@@ -70,6 +70,14 @@ docs/design.md         设计方案 v6（讨论与修订史）
 1. **本地验 JWT**：业务后端用 JWKS 公钥验 account token（sub=account_id，aud=appKey），以 account_id 作为业务侧用户主键
 2. **集中鉴权**：`POST /api/v1/authz/check` `{obj: "order:read"}` 或 `{method: "GET", path: "/orders"}` → `{allowed, version}`（Redis 缓存 60s，策略变更版本号自增自动失效；PDP 故障默认 fail-close）
 3. **前端菜单/按钮**：`GET /api/v1/me/menus?app=key`（按权限过滤的菜单树）与 `GET /api/v1/me/permissions?app=key`（权限码集合 + 版本号，可本地缓存）
+
+## 运维要点
+
+- **readiness**（`/ready`）= DB ping + Redis ping 双门槛；Redis 故障时实例退出 LB 池（denylist 默认 fail-close）
+- **审计保留**：`Audit.retentionDays`（默认 180 天），每日 janitor 硬删除过期行，删除量记日志
+- **CI**：`.github/workflows/ci.yml`（后端 gofmt/build/vet/test -race；前端 eslint/build）
+- **可信代理**：部署在反代/LB 后必须配置 `auth.trustedProxies`（IP/CIDR），否则限频与审计取直连地址
+- **最小权限**：管理端列表端点使用独立 `:read` 码（grant/resource/role/invitation/oauthclient/customrule），org_admin 自动绑定全部 app 域码
 
 ## 开发约定
 

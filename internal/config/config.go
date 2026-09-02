@@ -25,6 +25,7 @@ type Config struct {
 	Redis      *vredis.Config           `yaml:"Redis"`
 	Auth       AuthConfig               `yaml:"Auth"`
 	Mailer     MailerConfig             `yaml:"Mailer"`
+	Audit      AuditConfig              `yaml:"Audit"`
 	Social     SocialConfig             `yaml:"Social"`
 	Bootstrap  BootstrapConfig          `yaml:"Bootstrap"`
 }
@@ -59,6 +60,16 @@ type AuthConfig struct {
 	// when running behind a known reverse proxy/LB.
 	TrustedProxies []string `yaml:"trustedProxies"`
 }
+
+// AuditConfig covers audit-log housekeeping. RetentionDays <= 0 falls back
+// to the design default (180); the janitor deletes rows older than the
+// retention window once a day.
+type AuditConfig struct {
+	RetentionDays int `yaml:"retentionDays"`
+}
+
+// DefaultAuditRetentionDays matches design.md §10.
+const DefaultAuditRetentionDays = 180
 
 type MailerConfig struct {
 	Driver string     `yaml:"driver"`
@@ -175,6 +186,9 @@ func (c *Config) validate() error {
 	}
 	if c.Auth.BcryptCost < 4 || c.Auth.BcryptCost > 31 {
 		return errors.New("auth.bcryptCost must be within [4,31]")
+	}
+	if c.Audit.RetentionDays <= 0 {
+		c.Audit.RetentionDays = DefaultAuditRetentionDays
 	}
 	if c.Bootstrap.AdminUsername == "" || c.Bootstrap.AdminEmail == "" {
 		return errors.New("bootstrap.adminUsername / bootstrap.adminEmail are required")
