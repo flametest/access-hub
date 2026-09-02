@@ -317,12 +317,26 @@ function BindResourcesDrawer({
   });
   const rows = useMemo(() => treeQuery.data ?? [], [treeQuery.data]);
 
-  // resource_id -> effect for checked items. The current bindings aren't
-  // exposed by the admin API contract (only the replace PUT exists), so the
-  // drawer starts empty — saving is authoritative and replaces everything.
-  // TODO(frontend): preload bindings when a GET .../roles/{id}/resources lands.
-  const [selection, setSelection] = useState<Record<string, Effect>>({});
+  // Effective selection is DERIVED: the preloaded bindings (GET
+  // .../roles/{id}/resources) merged with this session's local overrides —
+  // no state duplication with the query. Saving still replaces the whole
+  // set (that is the PUT contract).
+  const [overrides, setOverrides] = useState<Record<string, Effect | undefined>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const bindingsQuery = useQuery({
+    queryKey: ["admin", "role-resources", appKey, role.id],
+    queryFn: () => adminApi.listRoleResources(appKey, role.id),
+  });
+  const selection = useMemo(() => {
+    const base: Record<string, Effect> = {};
+    for (const b of bindingsQuery.data ?? []) base[b.resource_id] = b.effect;
+    for (const [id, effect] of Object.entries(overrides)) {
+      if (effect === undefined) delete base[id];
+      else base[id] = effect;
+    }
+    return base;
+  }, [bindingsQuery.data, overrides]);
 
   const grouped = useMemo(() => {
     const groups: { type: string; rows: ResourceRow[] }[] = [
@@ -360,16 +374,14 @@ function BindResourcesDrawer({
   });
 
   function toggle(id: string) {
-    setSelection((prev) => {
-      const next = { ...prev };
-      if (id in next) delete next[id];
-      else next[id] = "allow";
-      return next;
-    });
+    setOverrides((prev) => ({
+      ...prev,
+      [id]: id in selection ? undefined : "allow",
+    }));
   }
 
   function setEffect(id: string, effect: Effect) {
-    setSelection((prev) => ({ ...prev, [id]: effect }));
+    setOverrides((prev) => ({ ...prev, [id]: effect }));
   }
 
   const checkedCount = Object.keys(selection).length;
@@ -380,12 +392,12 @@ function BindResourcesDrawer({
       description="Check the permission codes this role grants; deny entries are evaluated with M6 rules."
       onClose={onClose}
     >
-      <Card className="mb-4 border-[#FFAB00]/30 bg-[#FFAB00]/[0.08] p-4">
-        <p className="flex items-start gap-2 text-[13px] text-[#FFC96B]">
+      <Card className="mb-4 border-[#54B3B3]/30 bg-[#54B3B3]/[0.08] p-4">
+        <p className="flex items-start gap-2 text-[13px] text-[#9CD3D3]">
           <Icon name="alert" className="mt-0.5 size-4 flex-none" />
-          Saving replaces <strong>all</strong> resource bindings of this role
-          with the selection below (the API exposes binding as a full replace,
-          current bindings aren&apos;t listed).
+          Current bindings are preloaded below. Saving submits the full set
+          (the API contract is a complete replace) — unchecking a row removes
+          its binding.
         </p>
       </Card>
 

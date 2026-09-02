@@ -21,6 +21,9 @@ type AdminRoleService interface {
 	Update(ctx context.Context, actor *AdminActor, appKey, roleID string, req *dto.UpdateRoleReq) (*dto.AdminRoleItem, error)
 	Delete(ctx context.Context, actor *AdminActor, appKey, roleID string) error
 	SetResources(ctx context.Context, actor *AdminActor, appKey, roleID string, req *dto.SetRoleResourcesReq) ([]string, error)
+	// ListResources returns the role's CURRENT bindings (resource + effect)
+	// so the console can preload the bind drawer instead of blind-replacing.
+	ListResources(ctx context.Context, actor *AdminActor, appKey, roleID string) ([]dto.RoleResourceBindingItem, error)
 }
 
 type adminRoleServiceImpl struct {
@@ -182,6 +185,33 @@ func (s *adminRoleServiceImpl) Delete(ctx context.Context, actor *AdminActor, ap
 	}
 	_ = casbinNotify(ctx, s.c, []string{app.Key})
 	return nil
+}
+
+// ListResources returns the role's current resource bindings with effects.
+func (s *adminRoleServiceImpl) ListResources(ctx context.Context, actor *AdminActor, appKey, roleID string) ([]dto.RoleResourceBindingItem, error) {
+	app, err := actor.accessibleApp(ctx, s.c, appKey)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.roleOfApp(ctx, app, roleID); err != nil {
+		return nil, err
+	}
+	rows, err := s.c.RoleResourceRepo().ListByRoleWithResources(ctx, roleID)
+	if err != nil {
+		return nil, verrors.Wrap(err, "list role resources")
+	}
+	out := make([]dto.RoleResourceBindingItem, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, dto.RoleResourceBindingItem{
+			ResourceID: row.RoleResource.ResourceID,
+			Effect:     row.RoleResource.Effect,
+			Code:       row.ResourceCode,
+			Name:       row.ResourceName,
+			Type:       row.ResourceType,
+			Status:     row.ResourceStatus,
+		})
+	}
+	return out, nil
 }
 
 // normalizeBindingEffect validates an effect value ("allow"/"deny", default

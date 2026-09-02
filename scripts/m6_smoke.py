@@ -1,6 +1,7 @@
 import base64, hashlib, hmac, json, secrets, struct, time, urllib.request, urllib.parse, sys
 
-BASE = "http://localhost:8080"
+import os
+BASE = os.environ.get("BASE", "http://localhost:8080")
 PASS, FAIL = [], []
 
 def call(method, path, token=None, body=None, expect=None):
@@ -21,7 +22,7 @@ def check(name, cond, detail=""):
     if not cond: print("   FAIL:", name, detail)
 
 TS = str(int(time.time()))
-s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": "Admin#Passw0rd"})
+s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": os.environ.get("SMOKE_ADMIN_PASSWORD", "Admin#Passw0rd")})
 admin = d["access_token"]
 
 call("POST", "/api/v1/admin/orgs", admin, body={"key": f"m6-{TS}", "name": "M6 Org"})

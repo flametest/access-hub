@@ -1,6 +1,7 @@
 import base64, hashlib, hmac, json, secrets, struct, time, urllib.request, urllib.parse, sys
 
-BASE = "http://localhost:8080"
+import os
+BASE = os.environ.get("BASE", "http://localhost:8080")
 PASS, FAIL = [], []
 
 def call(method, path, token=None, body=None, form=None, basic=None, expect=None):
@@ -38,7 +39,7 @@ def check(name, cond, detail=""):
     if not cond: print("   FAIL:", name, detail)
 
 # ---------- 1. admin login (no 2FA yet) ----------
-s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": "Admin#Passw0rd"})
+s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": os.environ.get("SMOKE_ADMIN_PASSWORD", "Admin#Passw0rd")})
 check("admin login", "access_token" in d, str(d)[:200])
 admin = d["access_token"]
 
@@ -50,7 +51,7 @@ s, d = call("POST", "/api/v1/me/2fa/confirm", admin, body={"code": totp(secret)}
 codes = d.get("backup_codes", [])
 check("2fa confirm + 8 backup codes", len(codes) == 8, str(d)[:200])
 
-s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": "Admin#Passw0rd"})
+s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": os.environ.get("SMOKE_ADMIN_PASSWORD", "Admin#Passw0rd")})
 check("login challenged", d.get("mfa_required") is True and d.get("mfa_token"), str(d)[:200])
 MT = d["mfa_token"]
 s, d = call("POST", "/api/v1/auth/login/2fa", body={"mfa_token": MT, "code": "000000"}, expect=403)
@@ -115,7 +116,7 @@ check("service client own-app allow", d.get("allowed") is True, str(d)[:200])
 # ---------- 5. disable 2FA (restore admin for future smokes) ----------
 s, d = call("POST", "/api/v1/me/2fa/disable", admin, body={"password": "Admin#Passw0rd"})
 check("2fa disable", s == 200)
-s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": "Admin#Passw0rd"})
+s, d = call("POST", "/api/v1/auth/login", body={"identifier": "admin", "password": os.environ.get("SMOKE_ADMIN_PASSWORD", "Admin#Passw0rd")})
 check("login back to normal (no challenge)", "access_token" in d, str(d)[:200])
 
 print(f"\n===== M4 SMOKE: {len(PASS)} passed, {len(FAIL)} failed =====")

@@ -32,9 +32,11 @@ export function AccountsTab({ appKey }: { appKey: string }) {
   const toast = useToast();
   const queryClient = useQueryClient();
 
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
   const accountsQuery = useQuery({
-    queryKey: ["admin", "accounts", appKey],
-    queryFn: () => adminApi.listAccounts(appKey),
+    queryKey: ["admin", "accounts", appKey, page],
+    queryFn: () => adminApi.listAccounts(appKey, "", "", page, PAGE_SIZE),
   });
   const rolesQuery = useQuery({
     queryKey: ["admin", "roles", appKey],
@@ -43,6 +45,7 @@ export function AccountsTab({ appKey }: { appKey: string }) {
   const roles = rolesQuery.data ?? [];
 
   const invalidate = () =>
+    setPage(1);
     queryClient.invalidateQueries({ queryKey: ["admin", "accounts", appKey] });
 
   // Provision dialog
@@ -255,6 +258,32 @@ export function AccountsTab({ appKey }: { appKey: string }) {
               }
             }}
           />
+        )}
+        {accountsQuery.data && accountsQuery.data.total > PAGE_SIZE && (
+          <div className="mt-3 flex items-center justify-between text-[13px] text-white/60">
+            <span>
+              page {page} of {Math.max(1, Math.ceil(accountsQuery.data.total / PAGE_SIZE))} ·{" "}
+              {accountsQuery.data.total} accounts
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={page >= Math.ceil(accountsQuery.data.total / PAGE_SIZE)}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         )}
       </div>
 
@@ -649,7 +678,7 @@ function GrantsDrawer({
               label="Effect"
               value={effect}
               onChange={(event) => setEffect(event.target.value)}
-              hint="Deny needs M6 rule evaluation on the backend."
+              hint="Deny takes precedence per the priority ladder (grant deny 20)."
             >
               <option value="allow">allow</option>
               <option value="deny">deny</option>

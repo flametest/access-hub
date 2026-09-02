@@ -3,6 +3,8 @@ package handler
 import (
 	"net/http"
 
+	"strconv"
+
 	"github.com/flametest/access-hub/internal/api/middleware"
 	"github.com/flametest/access-hub/internal/service"
 	"github.com/flametest/access-hub/pkg/dto"
@@ -224,13 +226,28 @@ func (h *Handlers) AdminResetUserPassword(c echo.Context) error {
 
 // ---------- accounts ----------
 
-// AdminListAccounts handles GET /api/v1/admin/apps/{appKey}/accounts?q=&status=.
+// AdminListAccounts handles GET /api/v1/admin/apps/{appKey}/accounts?q=&status=&page=&page_size=.
 func (h *Handlers) AdminListAccounts(c echo.Context) error {
 	actor, err := adminActor(c)
 	if err != nil {
 		return err
 	}
-	resp, err := h.AdminAcc.List(c.Request().Context(), actor, c.Param("appKey"), c.QueryParam("q"), c.QueryParam("status"))
+	page, _ := strconv.Atoi(c.QueryParam("page"))
+	pageSize, _ := strconv.Atoi(c.QueryParam("page_size"))
+	resp, err := h.AdminAcc.List(c.Request().Context(), actor, c.Param("appKey"), c.QueryParam("q"), c.QueryParam("status"), page, pageSize)
+	if err != nil {
+		return err
+	}
+	return okJSON(c, http.StatusOK, resp)
+}
+
+// AdminListRoleResources handles GET /api/v1/admin/apps/{appKey}/roles/{roleId}/resources.
+func (h *Handlers) AdminListRoleResources(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	resp, err := h.AdminRole.ListResources(c.Request().Context(), actor, c.Param("appKey"), c.Param("roleId"))
 	if err != nil {
 		return err
 	}

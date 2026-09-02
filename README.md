@@ -2,7 +2,7 @@
 
 通用用户中心 + 多应用权限管理系统（IAM）：主账号（Company ID）+ 子账号（workspace account）两层身份、多租户（org）、资源统一建模（menu/api/button）、Casbin 集中鉴权（PDP）。
 
-> 设计文档（唯一事实来源）：[docs/design.md](docs/design.md)。当前状态：**M1–M3 核心闭环已实现**（认证 + 多租户 RBAC + 门户前端）；OAuth2/OIDC Provider（M4）、社交登录（M5）、自定义规则 ABAC（M6）待实施。
+> 设计文档（唯一事实来源）：[docs/design.md](docs/design.md)。当前状态：**M1–M6 全部实现**（认证 + 多租户 RBAC + OAuth2/OIDC + TOTP 2FA + 四家社交登录 + ABAC 自定义规则 + 管理后台），并完成两轮 review 加固（策略收敛/CAS 轮换、denylist fail-close/可信代理/CSP）。
 
 ## 架构速览
 
@@ -33,7 +33,7 @@ ACCESS_HUB_BOOTSTRAP_ADMIN_PASSWORD='Admin#Passw0rd' make run
 cd web && bun install && bun run dev   # → :3000，API 代理到 :8080
 ```
 
-端到端冒烟（服务运行中）：`make smoke`（`SMOKE_ADMIN_PASSWORD` 可覆盖管理员密码）。
+端到端冒烟（服务运行中）：`make smoke`（M1–M3 基础链路）、`make smoke-m4`（2FA + OIDC）、`make smoke-m6`（优先级/deny/ABAC/审计汇总）；三者均可用 `SMOKE_ADMIN_PASSWORD` / `BASE` 环境变量覆盖默认目标。
 
 ## 管理入口
 

@@ -49,7 +49,6 @@ export default function ChangePasswordPage() {
     setError(null);
     setSubmitting(true);
     try {
-      // TODO(backend): confirm PATCH /me password fields once the handler lands.
       await api.updateMe({ password: next, current_password: current });
       toast("Password changed.", "success");
       // Password change revokes all identity sessions — force a fresh sign-in.

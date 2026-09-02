@@ -122,6 +122,7 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/roles", auth.RequireAdmin("admin:role:manage")(h.AdminCreateRole))
 	e.Add(http.MethodPatch, "/api/v1/admin/apps/:appKey/roles/:roleId", auth.RequireAdmin("admin:role:manage")(h.AdminUpdateRole))
 	e.Add(http.MethodDelete, "/api/v1/admin/apps/:appKey/roles/:roleId", auth.RequireAdmin("admin:role:manage")(h.AdminDeleteRole))
+	e.Add(http.MethodGet, "/api/v1/admin/apps/:appKey/roles/:roleId/resources", auth.RequireAdmin("admin:role:manage")(h.AdminListRoleResources))
 	e.Add(http.MethodPut, "/api/v1/admin/apps/:appKey/roles/:roleId/resources", auth.RequireAdmin("admin:role:manage")(h.AdminSetRoleResources))
 
 	e.Add(http.MethodGet, "/api/v1/admin/audit-logs", auth.RequireAdmin("admin:audit:read")(h.AdminListAuditLogs))

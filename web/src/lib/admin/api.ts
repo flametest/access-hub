@@ -132,10 +132,12 @@ export const adminApi = {
     appKey: string,
     q = "",
     status = "",
+    page = 1,
+    pageSize = 20,
   ): Promise<Paged<AdminAccount>> =>
     toAdminAccountPage(
       await request<unknown>(
-        `/admin/apps/${enc(appKey)}/accounts?q=${enc(q)}&status=${enc(status)}`,
+        `/admin/apps/${enc(appKey)}/accounts?q=${enc(q)}&status=${enc(status)}&page=${page}&page_size=${pageSize}`,
       ),
     ),
 
@@ -196,8 +198,8 @@ export const adminApi = {
     ),
 
   /**
-   * Adds a direct grant. `effect` follows the M6 contract (backend currently
-   * persists allow-only — TODO(backend): drop the field if unaccepted).
+   * Adds a direct grant. `effect` (allow/deny) is persisted and enforced by
+   * the priority ladder (grant deny 20 < grant allow 30 — design §12 M6).
    */
   addGrant: (
     appKey: string,
@@ -297,6 +299,25 @@ export const adminApi = {
    * Replaces the role's resource bindings. M6 effect per item; the bare
    * `resource_ids` array stays accepted server-side.
    */
+  listRoleResources: async (
+    appKey: string,
+    roleId: string,
+  ): Promise<{ resource_id: string; effect: "allow" | "deny"; code: string }[]> => {
+    const raw = (await request<unknown>(
+      `/admin/apps/${enc(appKey)}/roles/${enc(roleId)}/resources`,
+    )) as unknown;
+    const list = Array.isArray(raw)
+      ? raw
+      : ((raw as Record<string, unknown>)?.items as unknown[] | undefined) ?? [];
+    return list.map((row) => {
+      const r = row as Record<string, unknown>;
+      return {
+        resource_id: String(r.resource_id ?? r.id ?? ""),
+        effect: r.effect === "deny" ? ("deny" as const) : ("allow" as const),
+        code: String(r.code ?? ""),
+      };
+    });
+  },
   setRoleResources: (
     appKey: string,
     roleId: string,

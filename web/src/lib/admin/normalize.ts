@@ -167,8 +167,8 @@ export function toAdminAccountPage(raw: unknown): Paged<AdminAccount> {
   return {
     items,
     total: num(r.total, r.total_count, items.length),
-    page: 1,
-    page_size: items.length || 1,
+    page: num(r.page, 1) || 1,
+    page_size: num(r.page_size, 25) || 25,
   };
 }
 

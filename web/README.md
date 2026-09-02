@@ -110,7 +110,7 @@ frontend never needs a separate admin session.
 - **Role resource bindings are write-only** in the current contract (only the
   replace `PUT` exists) — the bind drawer starts empty and warns that saving
   replaces all bindings. TODO: preload once a `GET .../roles/{id}/resources`
-  lands. Same for grant `effect` (backend persists allow-only today).
+  landed. Grant `effect` (allow/deny) is persisted and enforced (M6).
 - The M6 endpoints (`/admin/apps/{appKey}/custom-rules*`,
   `/admin/audit-logs/summary`) land with the parallel backend work; until then
   their sections show the friendly error card.

@@ -127,8 +127,10 @@ type AdminAccountItem struct {
 
 // AdminAccountPage is the response of GET /api/v1/admin/apps/{appKey}/accounts.
 type AdminAccountPage struct {
-	Items []AdminAccountItem `json:"items"`
-	Total int                `json:"total"`
+	Items    []AdminAccountItem `json:"items"`
+	Total    int                `json:"total"`
+	Page     int                `json:"page"`
+	PageSize int                `json:"page_size"`
 }
 
 // CreateAccountReq is the body of POST /api/v1/admin/apps/{appKey}/accounts.
@@ -329,6 +331,17 @@ type SetRoleResourceItem struct {
 type SetRoleResourcesReq struct {
 	ResourceIDs []string              `json:"resource_ids" validate:"omitempty,dive"`
 	Items       []SetRoleResourceItem `json:"items" validate:"omitempty,dive"`
+}
+
+// RoleResourceBindingItem is one current binding of GET
+// /api/v1/admin/apps/{appKey}/roles/{roleId}/resources (effect included).
+type RoleResourceBindingItem struct {
+	ResourceID string `json:"resource_id"`
+	Effect     string `json:"effect"`
+	Code       string `json:"code"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Status     string `json:"status"`
 }
 
 // ---------- audit logs ----------

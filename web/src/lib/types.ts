@@ -35,9 +35,8 @@ export interface ResetPasswordReq {
 }
 
 /**
- * PATCH /me handles profile and password changes (design.md §8).
- * TODO(backend): confirm the change-password fields once the handler lands;
- * we send the new password plus the current one for verification.
+ * PATCH /me handles profile and password changes (design.md §8):
+ * password changes require current_password and revoke other sessions.
  */
 export interface UpdateMeReq {
   password: string;

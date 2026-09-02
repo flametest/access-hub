@@ -22,7 +22,7 @@ const EmailCodePurposeAccountActivate = "account_activate"
 // AdminAccountService manages workspace accounts: provisioning, status,
 // password resets, identity transfer, roles and direct grants.
 type AdminAccountService interface {
-	List(ctx context.Context, actor *AdminActor, appKey, q, status string) (*dto.AdminAccountPage, error)
+	List(ctx context.Context, actor *AdminActor, appKey, q, status string, page, pageSize int) (*dto.AdminAccountPage, error)
 	Create(ctx context.Context, actor *AdminActor, appKey string, req *dto.CreateAccountReq) (*dto.CreateAccountResp, error)
 	Update(ctx context.Context, actor *AdminActor, appKey, accountID string, req *dto.UpdateAccountReq) (*dto.AdminAccountItem, error)
 	ResetPassword(ctx context.Context, actor *AdminActor, appKey, accountID string, req *dto.ResetPasswordReq) error
@@ -73,10 +73,19 @@ func (s *adminAccountServiceImpl) toItem(account *model.Account, roles []dto.Rol
 	}
 }
 
-func (s *adminAccountServiceImpl) List(ctx context.Context, actor *AdminActor, appKey, q, status string) (*dto.AdminAccountPage, error) {
+func (s *adminAccountServiceImpl) List(ctx context.Context, actor *AdminActor, appKey, q, status string, page, pageSize int) (*dto.AdminAccountPage, error) {
 	app, err := actor.accessibleApp(ctx, s.c, appKey)
 	if err != nil {
 		return nil, err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
 	}
 	var qPtr, statusPtr *string
 	if q != "" {
@@ -85,7 +94,11 @@ func (s *adminAccountServiceImpl) List(ctx context.Context, actor *AdminActor, a
 	if status != "" {
 		statusPtr = &status
 	}
-	accounts, err := s.c.AccountRepo().ListByAppQuery(ctx, app.Id, qPtr, statusPtr)
+	total, err := s.c.AccountRepo().CountByAppQuery(ctx, app.Id, qPtr, statusPtr)
+	if err != nil {
+		return nil, verrors.Wrap(err, "count accounts")
+	}
+	accounts, err := s.c.AccountRepo().ListByAppQueryPaged(ctx, app.Id, qPtr, statusPtr, (page-1)*pageSize, pageSize)
 	if err != nil {
 		return nil, verrors.Wrap(err, "list accounts")
 	}
@@ -93,7 +106,7 @@ func (s *adminAccountServiceImpl) List(ctx context.Context, actor *AdminActor, a
 	for _, account := range accounts {
 		items = append(items, *s.toItem(account, s.rolesOf(ctx, account.Id)))
 	}
-	return &dto.AdminAccountPage{Items: items, Total: len(items)}, nil
+	return &dto.AdminAccountPage{Items: items, Total: int(total), Page: page, PageSize: pageSize}, nil
 }
 
 // resolveAccount loads the account and asserts it belongs to the app.

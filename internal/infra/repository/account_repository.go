@@ -25,6 +25,10 @@ type AccountRepo interface {
 	// ListByAppQuery is the admin console variant: q (optional) matches
 	// email/username substring (lower-normalized); statusFilter nil means all.
 	ListByAppQuery(ctx context.Context, appID string, q *string, statusFilter *string) ([]*model.Account, error)
+	// ListByAppQueryPaged / CountByAppQuery are the paginated admin-console
+	// pair over the same filters (offset+limit / total rows).
+	ListByAppQueryPaged(ctx context.Context, appID string, q *string, statusFilter *string, offset, limit int) ([]*model.Account, error)
+	CountByAppQuery(ctx context.Context, appID string, q *string, statusFilter *string) (int64, error)
 	UpdateFields(ctx context.Context, id string, fields map[string]any) error
 	TouchLastLogin(ctx context.Context, id string, at time.Time) error
 }
@@ -91,7 +95,30 @@ func (r *accountRepoImpl) ListByApp(ctx context.Context, appID string, statusFil
 }
 
 func (r *accountRepoImpl) ListByAppQuery(ctx context.Context, appID string, q *string, statusFilter *string) ([]*model.Account, error) {
-	query := r.db.WithContext(ctx).Where("app_id = ?", appID)
+	var out []*model.Account
+	err := r.accountFilter(appID, q, statusFilter).WithContext(ctx).Order("created_at ASC").Find(&out).Error
+	return out, err
+}
+
+// ListByAppQueryPaged is the paginated variant of ListByAppQuery (same
+// filters, deterministic order, LIMIT/OFFSET).
+func (r *accountRepoImpl) ListByAppQueryPaged(ctx context.Context, appID string, q *string, statusFilter *string, offset, limit int) ([]*model.Account, error) {
+	query := r.accountFilter(appID, q, statusFilter).WithContext(ctx)
+	var out []*model.Account
+	err := query.Order("created_at ASC").Offset(offset).Limit(limit).Find(&out).Error
+	return out, err
+}
+
+// CountByAppQuery counts the rows ListByAppQueryPaged would return.
+func (r *accountRepoImpl) CountByAppQuery(ctx context.Context, appID string, q *string, statusFilter *string) (int64, error) {
+	var count int64
+	err := r.accountFilter(appID, q, statusFilter).WithContext(ctx).Model(&model.Account{}).Count(&count).Error
+	return count, err
+}
+
+// accountFilter builds the shared WHERE (app + optional q/status).
+func (r *accountRepoImpl) accountFilter(appID string, q *string, statusFilter *string) *gorm.DB {
+	query := r.db.Where("app_id = ?", appID)
 	if q != nil && strings.TrimSpace(*q) != "" {
 		pattern := "%" + strings.ToLower(strings.TrimSpace(*q)) + "%"
 		query = query.Where("LOWER(email) LIKE ? OR LOWER(username) LIKE ?", pattern, pattern)
@@ -99,9 +126,7 @@ func (r *accountRepoImpl) ListByAppQuery(ctx context.Context, appID string, q *s
 	if statusFilter != nil && *statusFilter != "" {
 		query = query.Where("status = ?", *statusFilter)
 	}
-	var out []*model.Account
-	err := query.Order("created_at ASC").Find(&out).Error
-	return out, err
+	return query
 }
 
 func (r *accountRepoImpl) UpdateFields(ctx context.Context, id string, fields map[string]any) error {
