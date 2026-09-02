@@ -48,6 +48,16 @@ type AuthConfig struct {
 	// (GET /oauth2/authorize) redirects anonymous users to
 	// {PortalURL}/login?next={original authorize URL} (M4 decision).
 	PortalURL string `yaml:"portalURL"`
+	// DenylistFailOpen degrades the revoked-token denylist when Redis is
+	// unavailable: default false = fail-close (reject the request); true =
+	// serve tokens whose revocation cannot be checked (design §10: the
+	// degradation must be an explicit operator choice).
+	DenylistFailOpen bool `yaml:"denylistFailOpen"`
+	// TrustedProxies lists direct peers (IP or CIDR) whose X-Forwarded-For
+	// header is honored when extracting the client IP for sessions, rate
+	// limits and audit entries. Empty (default) = never trust XFF; set it
+	// when running behind a known reverse proxy/LB.
+	TrustedProxies []string `yaml:"trustedProxies"`
 }
 
 type MailerConfig struct {

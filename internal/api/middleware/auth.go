@@ -8,6 +8,10 @@ import (
 	"context"
 	"strings"
 
+	"errors"
+	"github.com/flametest/access-hub/internal/infra/kv"
+	log "github.com/flametest/vita/vlog"
+
 	"github.com/flametest/access-hub/internal/container"
 	"github.com/flametest/access-hub/internal/domain"
 	"github.com/flametest/access-hub/internal/infra/jwt"
@@ -91,8 +95,20 @@ func (m *AuthMiddleware) authenticate(c echo.Context) (*jwt.Claims, error) {
 	}
 	// Logged-out (revoked) access tokens are rejected via the Redis denylist.
 	if claims.ID != "" {
-		if _, err := m.c.KV().Get(c.Request().Context(), "jwt:deny:"+claims.ID); err == nil {
+		switch _, err := m.c.KV().Get(c.Request().Context(), "jwt:deny:"+claims.ID); {
+		case err == nil:
 			return nil, verrors.UnauthorizedError("token has been revoked")
+		case errors.Is(err, kv.ErrNotFound):
+			// not revoked — the normal path
+		default:
+			// KV unavailable: fail-close unless the operator explicitly
+			// opted into the degraded mode (design §10). A silently
+			// fail-open denylist would honor logged-out tokens during an
+			// outage.
+			if !m.c.Cfg().Auth.DenylistFailOpen {
+				return nil, verrors.InternalServerError("token validation temporarily unavailable")
+			}
+			log.Warn().Any("jti", claims.ID).Msg("denylist unavailable (fail-open mode): token accepted without revocation check")
 		}
 	}
 	kind := KindIdentity

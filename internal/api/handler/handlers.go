@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"sync"
 
+	"net"
+	"strings"
+
 	"github.com/flametest/access-hub/internal/container"
 	"github.com/flametest/access-hub/internal/service"
 	"github.com/flametest/access-hub/pkg/dto"
@@ -86,24 +89,66 @@ func NewHandlers(c container.Container) *Handlers {
 	}
 }
 
-// requestInfo extracts the device (User-Agent) and client IP (first
-// X-Forwarded-For hop, else RemoteAddr) used for sessions and guards.
+// requestInfo extracts the device (User-Agent) and the client IP used for
+// sessions, rate limits and audit entries. X-Forwarded-For is honored ONLY
+// when the direct peer is a configured trusted proxy (auth.trustedProxies):
+// an untrusted client must not forge the header to rotate its apparent IP
+// past the login/code rate limits.
 func requestInfo(c echo.Context) (device, ip string) {
 	device = c.Request().UserAgent()
-	ip = c.RealIP()
-	if forwarded := c.Request().Header.Get("X-Forwarded-For"); forwarded != "" {
-		// Take the first hop (the original client).
+	ip = peerIP(c)
+	if forwarded := c.Request().Header.Get("X-Forwarded-For"); forwarded != "" && trustedProxy(c) {
+		// Take the first hop (the original client as seen by the proxy).
+		first := forwarded
 		for i := 0; i < len(forwarded); i++ {
 			if forwarded[i] == ',' {
-				ip = trimSpace(forwarded[:i])
+				first = forwarded[:i]
 				break
 			}
 		}
-		if ip == "" {
-			ip = forwarded
+		if parsed := trimSpace(first); parsed != "" {
+			ip = parsed
 		}
 	}
 	return device, ip
+}
+
+// peerIP returns the direct TCP peer address (host part only).
+func peerIP(c echo.Context) string {
+	host, _, err := net.SplitHostPort(c.Request().RemoteAddr)
+	if err != nil {
+		return c.Request().RemoteAddr
+	}
+	return host
+}
+
+// trustedProxies is the configured auth.trustedProxies list (exact IPs and
+// CIDRs), set once via SetTrustedProxies during router wiring. Package-level
+// because requestInfo is a free function used across handler files.
+var trustedProxies []string
+
+// SetTrustedProxies installs the trusted proxy list used by requestInfo.
+func SetTrustedProxies(list []string) { trustedProxies = list }
+
+// trustedProxy reports whether the direct peer is a configured proxy.
+func trustedProxy(c echo.Context) bool {
+	raw := peerIP(c)
+	ip := net.ParseIP(raw)
+	if ip == nil {
+		return false
+	}
+	for _, entry := range trustedProxies {
+		if strings.Contains(entry, "/") {
+			if _, network, err := net.ParseCIDR(entry); err == nil && network.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if allowed := net.ParseIP(entry); allowed != nil && allowed.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func trimSpace(s string) string {

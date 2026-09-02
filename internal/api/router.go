@@ -28,6 +28,9 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 
 	auth := middleware.NewAuth(a.c)
 	h := handler.NewHandlers(a.c)
+	// Client-IP extraction honors X-Forwarded-For only from configured
+	// peers (auth.trustedProxies).
+	handler.SetTrustedProxies(a.c.Cfg().Auth.TrustedProxies)
 
 	// ----- public (no auth) -----
 	e.Add(http.MethodPost, "/api/v1/auth/register", h.Register)

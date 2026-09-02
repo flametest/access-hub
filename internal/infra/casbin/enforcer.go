@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	log "github.com/flametest/vita/vlog"
+	"time"
+
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
@@ -202,10 +205,32 @@ func (en *Enforcer) RemoveGroupingPolicy(rule ...string) (bool, error) {
 	return ok, nil
 }
 
-// SetWatcher attaches the reload watcher; its callback triggers Reload.
+// reloadWithRetry re-runs a failed reload with exponential backoff. A stale
+// enforcer must never be silent; the reconciler is the last-resort net when
+// every attempt fails.
+func (en *Enforcer) reloadWithRetry() {
+	backoff := 250 * time.Millisecond
+	for attempt := 1; attempt <= 4; attempt++ {
+		if err := en.Reload(); err == nil {
+			return
+		}
+		log.Warn().Any("attempt", attempt).Msg("policy reload after watcher event failed, retrying")
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	log.Error().Msg("policy reload failed after retries; the reconciler will converge within its interval")
+}
+
+// SetWatcher attaches the reload watcher. The callback is registered on the
+// WATCHER directly — deliberately NOT via the raw enforcer's SetWatcher:
+// casbin's own wrapper installs a callback that reloads the UNSYNCED
+// enforcer (no lock), racing SyncedEnforcer users into a fatal
+// "concurrent map iteration and map write" under concurrent reload+enforce,
+// and it would silently overwrite this callback. Going through
+// SyncedEnforcer.LoadPolicy keeps every reload on the locked path.
 func (en *Enforcer) SetWatcher(w persist.Watcher) error {
-	if err := en.e.SetWatcher(w); err != nil {
-		return verrors.Wrap(err, "set casbin watcher")
+	if err := w.SetUpdateCallback(func(string) { en.reloadWithRetry() }); err != nil {
+		return verrors.Wrap(err, "set casbin watcher callback")
 	}
 	en.watcher = w
 	return nil

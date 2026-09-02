@@ -92,7 +92,11 @@ func mapOAuthError(err error) error {
 	case oauth2errors.ErrUnsupportedGrantType:
 		return oauthErr(400, "unsupported_grant_type", oauth2errors.Descriptions[err])
 	}
-	return oauthErr(500, "server_error", err.Error())
+	// Unknown errors are ours (storage, signing, loader): log the detail for
+	// operators, hand the client a generic description (RFC 6749 §5.2 keeps
+	// error_description non-sensitive).
+	log.Warn().Any("error", err).Msg("oauth token endpoint internal error")
+	return oauthErr(500, "server_error", "the server encountered an unexpected condition")
 }
 
 type oauthServiceImpl struct {

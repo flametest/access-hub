@@ -31,6 +31,13 @@ Auth:
   bcryptCost: 12
   issuerURL: http://localhost:8080
   mfaTokenTTL: 5m
+  # fail-close by default: when Redis is down, token revocation cannot be
+  # checked and requests are rejected. Set true only if availability beats
+  # revocation strictness during a Redis outage.
+  denylistFailOpen: false
+  # Peers (IP or CIDR) whose X-Forwarded-For is trusted for client-IP
+  # extraction. Empty = never trust XFF (use the direct peer address).
+  trustedProxies: []
   portalURL: http://localhost:3000
 Mailer:
   driver: console

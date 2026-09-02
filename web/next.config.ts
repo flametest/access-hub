@@ -22,6 +22,35 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async headers() {
+    // Hardening headers. The CSP intentionally allows inline script/style
+    // (Next.js hydration bootstrap) but blocks every external origin: no
+    // CDN, no third-party frame/embed surface. Dev needs 'unsafe-eval' for
+    // React refresh; the production build omits it.
+    const csp = [
+      "default-src 'self'",
+      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join("; ");
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: csp },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
