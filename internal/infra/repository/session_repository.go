@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"errors"
+
 	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/vita/verrors"
 	"gorm.io/gorm"
@@ -20,6 +22,11 @@ type SessionRepo interface {
 	// ListByUser returns every session owned by the identity, including
 	// revoked ones (the "my sessions" UI shows them).
 	ListByUser(ctx context.Context, userID string) ([]*model.Session, error)
+	// RotateToken atomically replaces the refresh-token hash of the session
+	// still holding oldHash (compare-and-swap). It returns false when no row
+	// matched — the token was rotated or revoked concurrently, which the
+	// caller treats as reuse.
+	RotateToken(ctx context.Context, id, oldHash, newHash string, at time.Time) (bool, error)
 	// Revoke sets revoked_at on an active (non-revoked) session. A missing or
 	// already-revoked session yields ConflictError.
 	Revoke(ctx context.Context, id string, at time.Time) error
@@ -80,6 +87,31 @@ func (r *sessionRepoImpl) ListByUser(ctx context.Context, userID string) ([]*mod
 // Revoke targets only active sessions; zero rows means "missing or already
 // revoked" — reported as ConflictError so callers can detect token reuse or
 // double logout.
+// RotateToken is the CAS rotation: only the session whose hash still equals
+// the presented one moves forward; version is bumped manually because
+// map-based Updates bypass the optimistic-lock plugin.
+func (r *sessionRepoImpl) RotateToken(ctx context.Context, id, oldHash, newHash string, at time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&model.Session{}).
+		Where("id = ? AND refresh_token_hash = ? AND revoked_at IS NULL", id, oldHash).
+		Updates(map[string]any{
+			"refresh_token_hash": newHash,
+			"rotation_count":     gorm.Expr("rotation_count + 1"),
+			"last_used_at":       at,
+			"version":            gorm.Expr("version + 1"),
+		})
+	if res.Error != nil {
+		// The optimistic-lock plugin reports rows:0 on versioned models as a
+		// lock conflict; for the CAS rotation a no-match IS the lost race
+		// (hash already rotated or row revoked since the read).
+		if errors.Is(res.Error, verrors.ErrOptimisticLock) {
+			return false, nil
+		}
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 func (r *sessionRepoImpl) Revoke(ctx context.Context, id string, at time.Time) error {
 	res := r.db.WithContext(ctx).Exec(
 		"UPDATE sessions SET revoked_at = ?, version = version + 1 WHERE id = ? AND revoked_at IS NULL AND deleted_at IS NULL",

@@ -4,6 +4,8 @@
 package container
 
 import (
+	"time"
+
 	"github.com/flametest/access-hub/internal/config"
 	casbinx "github.com/flametest/access-hub/internal/infra/casbin"
 	"github.com/flametest/access-hub/internal/infra/jwt"
@@ -13,6 +15,7 @@ import (
 	"github.com/flametest/access-hub/internal/infra/social"
 	"github.com/flametest/vita/verrors"
 	"github.com/flametest/vita/vgorm"
+	log "github.com/flametest/vita/vlog"
 	"github.com/flametest/vita/vredis"
 	"gorm.io/gorm"
 )
@@ -57,14 +60,15 @@ type Container interface {
 }
 
 type containerImpl struct {
-	cfg     *config.Config
-	db      *gorm.DB
-	redis   vredis.Client
-	store   kv.Store
-	mailer  mailer.Mailer
-	jwt     *jwt.Manager
-	watcher *casbinx.RedisWatcher
-	enf     *casbinx.Enforcer
+	cfg        *config.Config
+	db         *gorm.DB
+	redis      vredis.Client
+	store      kv.Store
+	mailer     mailer.Mailer
+	reconciler *casbinx.Reconciler
+	jwt        *jwt.Manager
+	watcher    *casbinx.RedisWatcher
+	enf        *casbinx.Enforcer
 
 	userRepo         repository.UserRepo
 	accountRepo      repository.AccountRepo
@@ -143,8 +147,23 @@ func NewContainer(cfg *config.Config) (Container, error) {
 	}
 
 	// Redis watcher: reload broadcasts on the casbin:reload channel trigger a
-	// full policy re-load on this instance too.
-	watcher := casbinx.NewRedisWatcher(*cfg.Redis, func() { _ = enf.Reload() })
+	// full policy re-load on this instance too. A failing reload (DB blip,
+	// loader error) is retried with backoff and logged — a stale enforcer
+	// must never be silent; the reconciler below is the last-resort net.
+	watcher := casbinx.NewRedisWatcher(*cfg.Redis, func() {
+		backoff := 250 * time.Millisecond
+		for attempt := 1; attempt <= 4; attempt++ {
+			if err := enf.Reload(); err == nil {
+				return
+			}
+			log.Warn().Any("attempt", attempt).Any("error", err).Msg("policy reload after watcher event failed, retrying")
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+		log.Error().Msg("policy reload failed after retries; the reconciler will converge within its interval")
+	})
+	reconciler := casbinx.NewReconciler(store, enf.Reload, casbinx.DefaultReconcileInterval)
+	_ = reconciler.Start()
 	if err := enf.SetWatcher(watcher); err != nil {
 		watcher.Close()
 		release(db, redisClient, nil)
@@ -217,6 +236,10 @@ func (c *containerImpl) SocialRegistry() map[string]social.Provider {
 // Close releases the watcher (stops pub/sub), the Redis client and the
 // database pool. Safe to call on a partially-initialized container.
 func (c *containerImpl) Close() {
+	if c.reconciler != nil {
+		c.reconciler.Stop()
+		c.reconciler = nil
+	}
 	if c.watcher != nil {
 		c.watcher.Close()
 		c.watcher = nil

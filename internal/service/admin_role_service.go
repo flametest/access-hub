@@ -145,9 +145,16 @@ func (s *adminRoleServiceImpl) Delete(ctx context.Context, actor *AdminActor, ap
 	if role.BuiltIn {
 		return verrors.ForbiddenError("built-in roles cannot be deleted")
 	}
-	// Remove in-memory rules bound to this role before the DB delete.
-	bindings, err := s.c.AccountRoleRepo().ListByRole(ctx, role.Id)
-	if err == nil {
+	// Snapshot the in-memory cleanup inputs BEFORE the soft delete (the
+	// soft-deleted role's rows vanish from every list afterwards), but apply
+	// them only after the DB write commits — a failed delete must not strip
+	// live rules from the enforcer with no reload trigger.
+	bindings, bindErr := s.c.AccountRoleRepo().ListByRole(ctx, role.Id)
+	attachments, attErr := s.c.RoleResourceRepo().ListByRole(ctx, role.Id)
+	if err := s.c.RoleRepo().UpdateFields(ctx, role.Id, map[string]any{"deleted_at": nowUTC()}); err != nil {
+		return verrors.Wrap(err, "delete role")
+	}
+	if bindErr == nil {
 		for _, b := range bindings {
 			account, err := s.c.AccountRepo().FindByID(ctx, b.AccountID)
 			if err != nil {
@@ -160,8 +167,7 @@ func (s *adminRoleServiceImpl) Delete(ctx context.Context, actor *AdminActor, ap
 			_ = syncAccountRoleBinding(ctx, s.c, account.Id, appRow, role, false)
 		}
 	}
-	attachments, err := s.c.RoleResourceRepo().ListByRole(ctx, role.Id)
-	if err == nil {
+	if attErr == nil {
 		for _, a := range attachments {
 			resource, err := s.c.ResourceRepo().FindByID(ctx, a.ResourceID)
 			if err != nil {
@@ -173,9 +179,6 @@ func (s *adminRoleServiceImpl) Delete(ctx context.Context, actor *AdminActor, ap
 			}
 			_ = syncRoleResourceRule(ctx, s.c, role, resourceApp.Key, resource.Code, a.Effect, false)
 		}
-	}
-	if err := s.c.RoleRepo().UpdateFields(ctx, role.Id, map[string]any{"deleted_at": nowUTC()}); err != nil {
-		return verrors.Wrap(err, "delete role")
 	}
 	_ = casbinNotify(ctx, s.c, []string{app.Key})
 	return nil

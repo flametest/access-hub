@@ -24,6 +24,7 @@ import (
 	"github.com/flametest/access-hub/pkg/dto"
 	"github.com/flametest/vita/verrors"
 	"github.com/flametest/vita/vgorm"
+	log "github.com/flametest/vita/vlog"
 	oauth2 "github.com/go-oauth2/oauth2/v4"
 	oauth2errors "github.com/go-oauth2/oauth2/v4/errors"
 	"github.com/go-oauth2/oauth2/v4/server"
@@ -444,19 +445,28 @@ func (s *oauthServiceImpl) refreshToken(ctx context.Context, r *http.Request) (m
 		return nil, oauthErr(400, "invalid_grant", "client is not authorized for the refresh_token grant")
 	}
 
-	// Rotate in place and retire the presented hash for the reuse window.
+	// Compare-and-swap rotation: two concurrent presentations of the same
+	// (current) token must not both succeed — the loser detects the CAS miss
+	// as reuse and revokes the whole token family.
 	newToken, err := randomToken()
 	if err != nil {
 		return nil, verrors.InternalServerError("generate refresh token")
 	}
-	if err := s.c.OAuthRefreshTokenRepo().UpdateFields(ctx, row.Id, map[string]any{
-		"token_hash":     sha256Hex(newToken),
-		"rotation_count": row.RotationCount + 1,
-		"last_used_at":   now,
-	}); err != nil {
+	rotated, err := s.c.OAuthRefreshTokenRepo().RotateToken(ctx, row.Id, presentedHash, sha256Hex(newToken), now)
+	if err != nil {
 		return nil, verrors.Wrap(err, "rotate refresh token")
 	}
-	_ = s.c.KV().Set(ctx, oauth2x.RetiredHashPrefix+presentedHash, row.ClientID, s.c.Cfg().Auth.RefreshTokenTTL)
+	if !rotated {
+		_ = s.c.OAuthRefreshTokenRepo().RevokeAllForClient(ctx, row.ClientID, now)
+		writeAudit(ctx, s.c, ActorSystem, "", nil, AuditTokenReuse, "oauth_refresh_token", presentedHash,
+			map[string]any{"reason": "concurrent oauth refresh token rotation detected", "client_id": row.ClientID}, "", "")
+		return nil, oauthErr(400, "invalid_grant", "refresh token reuse detected, token family revoked")
+	}
+	// Retire the presented hash for the reuse window (best-effort: the CAS
+	// above is the primary guard).
+	if kvErr := s.c.KV().Set(ctx, oauth2x.RetiredHashPrefix+presentedHash, row.ClientID, s.c.Cfg().Auth.RefreshTokenTTL); kvErr != nil {
+		log.Warn().Any("error", kvErr).Msg("record retired oauth refresh token failed (replay detection degraded)")
+	}
 
 	// Fresh access token for the stored account subject.
 	claims, err := s.accountClaimsFor(ctx, *row.AccountID, *row.UserID, s.c.Cfg().Auth.AccessTokenTTL)

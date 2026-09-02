@@ -46,6 +46,11 @@ func bumpPolicyVersions(ctx context.Context, c container.Container, appKeys []st
 			log.Warn().Any("error", err).Any("app_key", key).Msg("policy version bump failed (ignored)")
 		}
 	}
+	// The global epoch drives the reconciler: every instance compares it with
+	// the epoch at its last (re)load and self-heals a missed watcher event.
+	if _, err := casbinx.BumpGlobalEpoch(ctx, c.KV()); err != nil {
+		log.Warn().Any("error", err).Msg("global policy epoch bump failed (reconciler may lag one interval)")
+	}
 }
 
 // casbinNotify broadcasts a full-policy reload to all instances. Errors are

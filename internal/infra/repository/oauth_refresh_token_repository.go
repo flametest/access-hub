@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"errors"
+
 	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/vita/verrors"
 	"gorm.io/gorm"
@@ -18,6 +20,10 @@ type OAuthRefreshTokenRepo interface {
 	// (including revoked ones — callers decide on reuse semantics).
 	FindByTokenHash(ctx context.Context, tokenHash string) (*model.OAuthRefreshToken, error)
 	UpdateFields(ctx context.Context, id string, fields map[string]any) error
+	// RotateToken atomically replaces the hash of the row still holding
+	// oldHash (compare-and-swap). false = no row matched: the token was
+	// rotated or revoked concurrently; callers treat it as reuse.
+	RotateToken(ctx context.Context, id, oldHash, newHash string, at time.Time) (bool, error)
 	// Revoke targets only active tokens; zero rows yields ConflictError
 	// (missing or already revoked).
 	Revoke(ctx context.Context, id string, at time.Time) error
@@ -58,6 +64,32 @@ func (r *oauthRefreshTokenRepoImpl) UpdateFields(ctx context.Context, id string,
 }
 
 // Revoke targets only active tokens, mirroring SessionRepo.Revoke semantics.
+// RotateToken is the CAS rotation; version is bumped manually because
+// map-based Updates bypass the optimistic-lock plugin.
+func (r *oauthRefreshTokenRepoImpl) RotateToken(ctx context.Context, id, oldHash, newHash string, at time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&model.OAuthRefreshToken{}).
+		Where("id = ? AND token_hash = ? AND revoked_at IS NULL", id, oldHash).
+		Updates(map[string]any{
+			"token_hash":     newHash,
+			"rotation_count": gorm.Expr("rotation_count + 1"),
+			"last_used_at":   at,
+			// no "version" key: the optimistic-lock plugin treats a map
+			// update carrying it as armed and misreports a lost CAS race
+			// (rows:0) as a lock conflict instead of a plain no-match.
+		})
+	if res.Error != nil {
+		// The optimistic-lock plugin reports rows:0 on versioned models as a
+		// lock conflict; for the CAS rotation a no-match IS the lost race
+		// (hash already rotated or row revoked since the read).
+		if errors.Is(res.Error, verrors.ErrOptimisticLock) {
+			return false, nil
+		}
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 func (r *oauthRefreshTokenRepoImpl) Revoke(ctx context.Context, id string, at time.Time) error {
 	res := r.db.WithContext(ctx).Exec(
 		"UPDATE oauth_refresh_tokens SET revoked_at = ?, version = version + 1 WHERE id = ? AND revoked_at IS NULL AND deleted_at IS NULL",

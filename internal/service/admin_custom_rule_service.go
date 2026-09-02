@@ -195,15 +195,22 @@ func (s *adminCustomRuleServiceImpl) Update(ctx context.Context, actor *AdminAct
 		fields["status"] = *req.Status
 	}
 	if len(fields) > 0 {
-		// Swap the in-memory rule out with its previous shape, then re-add the
-		// new one (a changed expr/priority/effect changes the tuple).
-		_ = syncCustomRule(ctx, s.c, app.Key, row.Priority, row.Effect, row.Expr, false)
+		// DB is the source of truth: persist first. Only after a committed
+		// write do we swap the in-memory rule out with its previous shape and
+		// re-add the new one — a failed write must never leave the enforcer
+		// missing an active (possibly deny) rule with no reload trigger.
 		if err := s.c.CustomRuleRepo().UpdateFields(ctx, row.Id, fields); err != nil {
 			return nil, verrors.Wrap(err, "update custom rule")
 		}
 		updated, err := s.c.CustomRuleRepo().FindByID(ctx, row.Id)
 		if err != nil {
+			// DB updated but the re-read failed: broadcast a reload so every
+			// instance (including this one) converges from the business table.
+			_ = casbinNotify(ctx, s.c, []string{app.Key})
 			return nil, verrors.Wrap(err, "reload custom rule")
+		}
+		if row.Status == model.CustomRuleStatusActive {
+			_ = syncCustomRule(ctx, s.c, app.Key, row.Priority, row.Effect, row.Expr, false)
 		}
 		if updated.Status == model.CustomRuleStatusActive {
 			_ = syncCustomRule(ctx, s.c, app.Key, updated.Priority, updated.Effect, updated.Expr, true)

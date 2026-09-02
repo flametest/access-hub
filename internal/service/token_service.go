@@ -12,6 +12,7 @@ import (
 	"github.com/flametest/access-hub/internal/infra/repository"
 	"github.com/flametest/vita/verrors"
 	"github.com/flametest/vita/vgorm"
+	log "github.com/flametest/vita/vlog"
 	"github.com/google/uuid"
 )
 
@@ -230,18 +231,24 @@ func (s *tokenServiceImpl) Rotate(ctx context.Context, refreshToken string) (*mo
 	if err != nil {
 		return nil, "", verrors.InternalServerError(fmt.Sprintf("generate refresh token: %v", err))
 	}
-	updates := map[string]any{
-		"refresh_token_hash": sha256Hex(newToken),
-		"rotation_count":     session.RotationCount + 1,
-		"last_used_at":       now,
-	}
-	if err := s.c.SessionRepo().UpdateFields(ctx, session.Id, updates); err != nil {
+	// Compare-and-swap rotation: two concurrent presentations of the same
+	// (current) token must not both succeed — the loser detects the CAS miss
+	// as reuse and revokes the session.
+	rotated, err := s.c.SessionRepo().RotateToken(ctx, session.Id, presented, sha256Hex(newToken), now)
+	if err != nil {
 		return nil, "", verrors.Wrap(err, "rotate session")
 	}
-	// Retire the presented hash so a replay is detected within the refresh
-	// TTL window (older tokens are naturally expired by then).
+	if !rotated {
+		_ = s.c.SessionRepo().Revoke(ctx, session.Id, now)
+		writeAudit(ctx, s.c, ActorSystem, "", nil, AuditTokenReuse, "session", session.Id,
+			map[string]any{"reason": "concurrent refresh token rotation detected"}, "", "")
+		return nil, "", verrors.UnauthorizedError("refresh token reuse detected, session revoked")
+	}
+	// Retire the presented hash so a later replay is detected within the
+	// refresh TTL window. Best-effort: the CAS above is the primary guard,
+	// a failed write only weakens replay detection until the TTL passes.
 	if err := s.c.KV().Set(ctx, kvKeyRetiredPrefix+presented, session.Id, s.c.Cfg().Auth.RefreshTokenTTL); err != nil {
-		return nil, "", verrors.Wrap(err, "record retired refresh token")
+		log.Warn().Any("error", err).Msg("record retired refresh token failed (replay detection degraded)")
 	}
 	session.RefreshTokenHash = sha256Hex(newToken)
 	session.RotationCount++

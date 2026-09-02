@@ -13,6 +13,33 @@ import (
 // periodic reconciliation (design.md §2.4).
 const policyVersionKeyPrefix = "policy:ver:"
 
+// GlobalEpochKey is the cluster-wide policy epoch: EVERY policy mutation
+// bumps it alongside the per-app versions. The Reconciler compares it with
+// the epoch observed at the local enforcer's last (re)load — pub/sub is
+// at-most-once, so this is the at-least-once convergence net (design §2.4).
+const GlobalEpochKey = policyVersionKeyPrefix + "__global__"
+
+// GetGlobalEpoch returns the cluster-wide policy epoch (0 when never bumped).
+func GetGlobalEpoch(ctx context.Context, store kv.Store) (int64, error) {
+	raw, err := store.Get(ctx, GlobalEpochKey)
+	if err != nil {
+		if errors.Is(err, kv.ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	epoch, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, errors.New("casbin: corrupted global policy epoch " + raw)
+	}
+	return epoch, nil
+}
+
+// BumpGlobalEpoch advances the cluster-wide policy epoch.
+func BumpGlobalEpoch(ctx context.Context, store kv.Store) (int64, error) {
+	return store.Incr(ctx, GlobalEpochKey, 0)
+}
+
 // PolicyVersionKey builds the Redis key for an app's policy version.
 func PolicyVersionKey(appKey string) string {
 	return policyVersionKeyPrefix + appKey
