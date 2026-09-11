@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Icon } from "@/components/icon";
 import { Initials } from "@/components/initials";
 import { Spinner } from "@/components/spinner";
@@ -19,6 +20,22 @@ export function AppHeader({ me }: { me?: Me }) {
   const router = useRouter();
   const pathname = usePathname();
   const [loggingOut, setLoggingOut] = useState(false);
+
+  // Admin console entry: shown only when the identity holds an account in the
+  // admin app (super_admin / org_admin both do; plain portal users don't).
+  // Shares the workspaces cache; non-members never see the link.
+  const workspacesQuery = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: () => api.listWorkspaces(),
+    enabled: Boolean(me),
+    staleTime: 30_000,
+  });
+  const isAdminUser = (workspacesQuery.data ?? []).some(
+    (workspace) => workspace.app_key === "admin",
+  );
+  const nav = isAdminUser
+    ? [...NAV, { href: "/admin", label: "Admin", icon: "shield" as const }]
+    : NAV;
 
   async function signOut() {
     setLoggingOut(true);
@@ -48,7 +65,7 @@ export function AppHeader({ me }: { me?: Me }) {
         </Link>
 
         <nav className="flex items-center gap-1" aria-label="Main">
-          {NAV.map((item) => {
+          {nav.map((item) => {
             const active =
               pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (

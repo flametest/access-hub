@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
 import { getAccessToken, subscribeToTokenChanges } from "@/lib/tokens";
 
 const getServerSnapshot = () => null;
@@ -21,11 +22,17 @@ export function useHasToken(): boolean {
  */
 export function useRequireAuth(): { authed: boolean } {
   const router = useRouter();
+  const pathname = usePathname();
   const authed = useHasToken();
 
   useEffect(() => {
-    if (!authed) router.replace("/login");
-  }, [authed, router]);
+    if (!authed) {
+      // Carry the current path so post-login lands back here (/login honors
+      // the `next` query param via resolveRedirectTarget).
+      const next = pathname ? `?next=${encodeURIComponent(pathname)}` : "";
+      router.replace(`/login${next}`);
+    }
+  }, [authed, pathname, router]);
 
   return { authed };
 }
