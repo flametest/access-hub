@@ -24,7 +24,7 @@ import (
 const (
 	// PlatformAdminAppKey is the app key of the admin console (dogfood domain).
 	PlatformAdminAppKey = "admin"
-	// PlatformAdminAppID is the fixed UUID from migration/seed.sql so
+	// PlatformAdminAppID is the fixed UUID from migration/0005_seed.sql so
 	// cross-references stay stable; bootstrap only creates the app when the
 	// seed is missing it.
 	PlatformAdminAppID = "00000000-0000-0000-0000-0000000000a1"
@@ -87,7 +87,7 @@ func Run(ctx context.Context, c container.Container) error {
 }
 
 // ensureAdminApp finds the platform admin app (key="admin"), creating it with
-// the fixed seed UUID when the seed.sql row is missing. Returns (app, created).
+// the fixed seed UUID when the 0005_seed.sql row is missing. Returns (app, created).
 func ensureAdminApp(ctx context.Context, c container.Container) (*model.App, bool, error) {
 	app, err := c.AppRepo().FindByKey(ctx, PlatformAdminAppKey)
 	if err != nil && !repository.IsNotFound(err) {

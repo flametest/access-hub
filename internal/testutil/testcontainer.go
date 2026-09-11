@@ -289,7 +289,7 @@ func writeRSAKeys(t *testing.T) (privatePath, publicPath string) {
 	return privatePath, publicPath
 }
 
-// schemaDDL is the sqlite-adapted full schema (mirrors migration/init.sql:
+// schemaDDL is the sqlite-adapted full schema (mirrors migration/0001_init.sql:
 // TEXT ids set explicitly in Go, DATETIME timestamps, TEXT jsonb columns).
 var schemaDDL = []string{
 	`CREATE TABLE orgs (
@@ -458,7 +458,7 @@ var schemaDDL = []string{
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		deleted_at DATETIME
 	)`,
-	// Partial unique indexes mirroring migration/init.sql so ON CONFLICT
+	// Partial unique indexes mirroring migration/0001_init.sql so ON CONFLICT
 	// clauses and uniqueness behave like production Postgres.
 	`CREATE UNIQUE INDEX uq_orgs_key ON orgs ("key") WHERE deleted_at IS NULL`,
 	`CREATE UNIQUE INDEX uq_org_members_org_user ON org_members (org_id, user_id) WHERE deleted_at IS NULL`,

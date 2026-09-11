@@ -35,3 +35,7 @@ go.work.sum
 
 # local RSA signing keys (secrets)
 deploy/keys/
+.mimosa
+
+web/node_modules
+web/.next

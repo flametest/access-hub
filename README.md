@@ -60,7 +60,7 @@ internal/service       认证/工作台/邀请/RBAC/authz/admin 服务层
 internal/api           路由、handler（每端点一文件）、中间件、admin 资源常量
 internal/infra         model/repository（vgorm）、jwt、casbin（loader+watcher）、kv、mailer、password
 pkg/dto                请求/响应 DTO（snake_case + validate）
-migration/             init.sql + seed.sql
+migration/             编号迁移 SQL（0001_init … 0005_seed，DDL 幂等可重放）
 web/                   门户前端（Company ID 登录 → 工作台 → 身份管理 → 邀请兑换）
 docs/design.md         设计方案 v6（讨论与修订史）
 ```

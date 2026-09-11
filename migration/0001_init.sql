@@ -3,8 +3,10 @@
 --   * unique constraints are partial (WHERE deleted_at IS NULL) to coexist with soft delete
 --   * username/email uniqueness and lookups are lower()-normalized
 --   * grant relations carry granted_by/granted_at/expires_at (NULL = never expires)
+--   * all DDL is idempotent (IF NOT EXISTS): lets cmd/migrate baseline over a
+--     database bootstrapped before the schema_migrations ledger existed
 
-CREATE TABLE orgs
+CREATE TABLE IF NOT EXISTS orgs
 (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version    BIGINT       NOT NULL DEFAULT 0,
@@ -15,11 +17,11 @@ CREATE TABLE orgs
     updated_at TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_orgs_key ON orgs (key) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_key ON orgs (key) WHERE deleted_at IS NULL;
 
 -- org_members is governance-only (owner/admin manage the org itself);
 -- business membership is derived from holding an account in an org-owned app.
-CREATE TABLE org_members
+CREATE TABLE IF NOT EXISTS org_members
 (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version    BIGINT      NOT NULL DEFAULT 0,
@@ -30,11 +32,11 @@ CREATE TABLE org_members
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_org_members_org_user ON org_members (org_id, user_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_org_members_user ON org_members (user_id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_org_members_org_user ON org_members (org_id, user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members (user_id) WHERE deleted_at IS NULL;
 
 -- users = primary identity (Company ID): holds portal credentials only.
-CREATE TABLE users
+CREATE TABLE IF NOT EXISTS users
 (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version              BIGINT      NOT NULL DEFAULT 0,
@@ -51,14 +53,14 @@ CREATE TABLE users
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at           TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_users_username ON users (LOWER(username)) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX uq_users_email ON users (LOWER(email)) WHERE deleted_at IS NULL;
-CREATE INDEX idx_users_email ON users (LOWER(email));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users (LOWER(username)) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (LOWER(email)) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (LOWER(email));
 
 -- accounts = workspace (per-app) accounts: independent password + roles;
 -- identity_id is NOT NULL by design (v6: always bound to a primary identity,
 -- auto-created when missing). Sub-account email != identity email is the norm.
-CREATE TABLE accounts
+CREATE TABLE IF NOT EXISTS accounts
 (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version       BIGINT       NOT NULL DEFAULT 0,
@@ -75,12 +77,12 @@ CREATE TABLE accounts
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at    TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_accounts_app_email ON accounts (app_id, LOWER(email)) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX uq_accounts_app_username ON accounts (app_id, username) WHERE deleted_at IS NULL AND username IS NOT NULL;
-CREATE INDEX idx_accounts_identity ON accounts (identity_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_accounts_app ON accounts (app_id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_app_email ON accounts (app_id, LOWER(email)) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_app_username ON accounts (app_id, username) WHERE deleted_at IS NULL AND username IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_accounts_identity ON accounts (identity_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_accounts_app ON accounts (app_id) WHERE deleted_at IS NULL;
 
-CREATE TABLE invitations
+CREATE TABLE IF NOT EXISTS invitations
 (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version             BIGINT       NOT NULL DEFAULT 0,
@@ -97,11 +99,11 @@ CREATE TABLE invitations
     updated_at          TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at          TIMESTAMPTZ
 );
-CREATE INDEX idx_invitations_app_email ON invitations (app_id, LOWER(email));
-CREATE INDEX idx_invitations_status ON invitations (status);
-CREATE INDEX idx_invitations_code_hash ON invitations (code_hash);
+CREATE INDEX IF NOT EXISTS idx_invitations_app_email ON invitations (app_id, LOWER(email));
+CREATE INDEX IF NOT EXISTS idx_invitations_status ON invitations (status);
+CREATE INDEX IF NOT EXISTS idx_invitations_code_hash ON invitations (code_hash);
 
-CREATE TABLE apps
+CREATE TABLE IF NOT EXISTS apps
 (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version     BIGINT       NOT NULL DEFAULT 0,
@@ -116,10 +118,10 @@ CREATE TABLE apps
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at  TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_apps_key ON apps (key) WHERE deleted_at IS NULL;
-CREATE INDEX idx_apps_org ON apps (org_id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_apps_key ON apps (key) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_apps_org ON apps (org_id) WHERE deleted_at IS NULL;
 
-CREATE TABLE resources
+CREATE TABLE IF NOT EXISTS resources
 (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version    BIGINT       NOT NULL DEFAULT 0,
@@ -139,13 +141,13 @@ CREATE TABLE resources
     updated_at TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_resources_app_code ON resources (app_id, code) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX uq_resources_app_route ON resources (app_id, method, route_path)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_resources_app_code ON resources (app_id, code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_resources_app_route ON resources (app_id, method, route_path)
     WHERE deleted_at IS NULL AND method IS NOT NULL AND route_path IS NOT NULL;
-CREATE INDEX idx_resources_app_type ON resources (app_id, type) WHERE deleted_at IS NULL;
-CREATE INDEX idx_resources_parent ON resources (parent_id);
+CREATE INDEX IF NOT EXISTS idx_resources_app_type ON resources (app_id, type) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_resources_parent ON resources (parent_id);
 
-CREATE TABLE roles
+CREATE TABLE IF NOT EXISTS roles
 (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version    BIGINT       NOT NULL DEFAULT 0,
@@ -158,9 +160,9 @@ CREATE TABLE roles
     updated_at TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_roles_app_code ON roles (app_id, code) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_app_code ON roles (app_id, code) WHERE deleted_at IS NULL;
 
-CREATE TABLE role_resources
+CREATE TABLE IF NOT EXISTS role_resources
 (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version     BIGINT      NOT NULL DEFAULT 0,
@@ -171,10 +173,10 @@ CREATE TABLE role_resources
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at  TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_role_resources ON role_resources (role_id, resource_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_role_resources_resource ON role_resources (resource_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_role_resources ON role_resources (role_id, resource_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_role_resources_resource ON role_resources (resource_id);
 
-CREATE TABLE account_roles
+CREATE TABLE IF NOT EXISTS account_roles
 (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version     BIGINT       NOT NULL DEFAULT 0,
@@ -187,10 +189,10 @@ CREATE TABLE account_roles
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at  TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_account_roles ON account_roles (account_id, role_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_account_roles_role ON account_roles (role_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_account_roles ON account_roles (account_id, role_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_account_roles_role ON account_roles (role_id);
 
-CREATE TABLE account_grants
+CREATE TABLE IF NOT EXISTS account_grants
 (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version     BIGINT       NOT NULL DEFAULT 0,
@@ -204,12 +206,12 @@ CREATE TABLE account_grants
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at  TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_account_grants ON account_grants (account_id, resource_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_account_grants_resource ON account_grants (resource_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_account_grants ON account_grants (account_id, resource_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_account_grants_resource ON account_grants (resource_id);
 
 -- sessions: refresh-token records. Rotation is in-place (same row: new hash,
 -- rotation_count++). Reuse of a replaced hash => revoke whole session.
-CREATE TABLE sessions
+CREATE TABLE IF NOT EXISTS sessions
 (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version            BIGINT       NOT NULL DEFAULT 0,
@@ -228,11 +230,11 @@ CREATE TABLE sessions
     updated_at         TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at         TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_sessions_token_hash ON sessions (refresh_token_hash) WHERE deleted_at IS NULL;
-CREATE INDEX idx_sessions_user ON sessions (user_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_sessions_account ON sessions (account_id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_token_hash ON sessions (refresh_token_hash) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_account ON sessions (account_id) WHERE deleted_at IS NULL;
 
-CREATE TABLE audit_logs
+CREATE TABLE IF NOT EXISTS audit_logs
 (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version     BIGINT       NOT NULL DEFAULT 0,
@@ -249,6 +251,6 @@ CREATE TABLE audit_logs
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at  TIMESTAMPTZ
 );
-CREATE INDEX idx_audit_logs_created_at ON audit_logs (created_at DESC);
-CREATE INDEX idx_audit_logs_actor ON audit_logs (actor_type, actor_id);
-CREATE INDEX idx_audit_logs_action ON audit_logs (action);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor_type, actor_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action);

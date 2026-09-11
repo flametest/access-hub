@@ -8,7 +8,7 @@ ALTER TABLE accounts ALTER COLUMN password_hash DROP NOT NULL;
 
 -- OAuth2/OIDC clients belong to an app. Confidential clients authenticate with
 -- a secret (stored hashed); public clients (SPA/native) MUST use PKCE.
-CREATE TABLE oauth_clients
+CREATE TABLE IF NOT EXISTS oauth_clients
 (
     id          VARCHAR(48) PRIMARY KEY, -- client_id, generated "cli_<16hex>"
     version     BIGINT       NOT NULL DEFAULT 0,
@@ -24,12 +24,12 @@ CREATE TABLE oauth_clients
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at  TIMESTAMPTZ
 );
-CREATE INDEX idx_oauth_clients_app ON oauth_clients (app_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_app ON oauth_clients (app_id) WHERE deleted_at IS NULL;
 
 -- Refresh tokens issued by the OAuth2 token endpoint. Rotation is in-place
 -- (same row: new hash, rotation_count++); presenting a replaced hash revokes
 -- the whole token family (same semantics as sessions).
-CREATE TABLE oauth_refresh_tokens
+CREATE TABLE IF NOT EXISTS oauth_refresh_tokens
 (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version        BIGINT       NOT NULL DEFAULT 0,
@@ -46,12 +46,12 @@ CREATE TABLE oauth_refresh_tokens
     updated_at     TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at     TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_oauth_refresh_hash ON oauth_refresh_tokens (token_hash) WHERE deleted_at IS NULL;
-CREATE INDEX idx_oauth_refresh_client ON oauth_refresh_tokens (client_id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_oauth_refresh_hash ON oauth_refresh_tokens (token_hash) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_client ON oauth_refresh_tokens (client_id) WHERE deleted_at IS NULL;
 
 -- TOTP per identity. The secret is stored base32; backup codes as sha256 hex
 -- hashes. One row per user (unique), confirmed only after a valid code check.
-CREATE TABLE totp_secrets
+CREATE TABLE IF NOT EXISTS totp_secrets
 (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version        BIGINT       NOT NULL DEFAULT 0,
@@ -64,4 +64,4 @@ CREATE TABLE totp_secrets
     updated_at     TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at     TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_totp_user ON totp_secrets (user_id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_totp_user ON totp_secrets (user_id) WHERE deleted_at IS NULL;

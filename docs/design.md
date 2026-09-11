@@ -81,7 +81,7 @@ access-hub/
 │   ├── infra/mailer/               # console(开发)/smtp
 │   └── constant/enum/
 ├── pkg/dto/
-├── migration/                      # init.sql + seed.sql
+├── migration/                      # 编号迁移 SQL（0001_init … 0005_seed，DDL 幂等）
 ├── deploy/server-config.yaml
 ├── docker-compose.yml / Dockerfile / Makefile / docs/design.md
 ```

@@ -1,6 +1,6 @@
 -- M5: social login identities (design.md §12 M5)
 
-CREATE TABLE identities
+CREATE TABLE IF NOT EXISTS identities
 (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version          BIGINT       NOT NULL DEFAULT 0,
@@ -16,6 +16,6 @@ CREATE TABLE identities
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at       TIMESTAMPTZ
 );
-CREATE UNIQUE INDEX uq_identities_provider_uid ON identities (provider, provider_user_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_identities_user ON identities (user_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_identities_email ON identities (LOWER(email)) WHERE deleted_at IS NULL AND email IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_identities_provider_uid ON identities (provider, provider_user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_identities_user ON identities (user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_identities_email ON identities (LOWER(email)) WHERE deleted_at IS NULL AND email IS NOT NULL;
