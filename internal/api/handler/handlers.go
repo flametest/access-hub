@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/flametest/access-hub/internal/api/middleware"
 	"github.com/flametest/access-hub/internal/container"
 	"github.com/flametest/access-hub/internal/service"
 	"github.com/flametest/access-hub/pkg/dto"
@@ -63,6 +64,8 @@ type Handlers struct {
 	AdminOAuth      service.AdminOAuthClientService
 	// M5 social login.
 	Social service.SocialService
+	// Shared token-validation middleware (browser OAuth authorize).
+	AuthMW *middleware.AuthMiddleware
 }
 
 // NewHandlers wires all services on top of the container.
@@ -86,6 +89,7 @@ func NewHandlers(c container.Container) *Handlers {
 		OAuth:           service.NewOAuthService(c),
 		AdminOAuth:      service.NewAdminOAuthClientService(c),
 		Social:          service.NewSocialService(c),
+		AuthMW:          middleware.NewAuth(c),
 	}
 }
 

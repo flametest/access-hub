@@ -1191,3 +1191,88 @@ func TestDisableAndTransferConvergeSessions(t *testing.T) {
 		t.Fatalf("oauth refresh token must be revoked after transfer")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 2e. browser authorize identity resolution: a logged-out (denylisted) or
+// disabled caller must be treated as "no session" and bounced to the portal
+// login, never mint codes from a merely well-signed token.
+// ---------------------------------------------------------------------------
+
+func TestBrowserAuthorizeRejectsLoggedOutOrDisabledCaller(t *testing.T) {
+	env := newOAuthEnv(t)
+	env.createAppWithRole("crmb")
+	alice := env.registerIdentity("alicebo", "alicebo@test.dev", "AlicePassw0rd")
+	uid, err := env.tc.UserRepo().FindByEmail(context.Background(), "alicebo@test.dev")
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	clientID, _ := env.createOAuthClient("crmb", "CRM B", "confidential", []string{"authorization_code"})
+	target := "/oauth2/authorize?" + url.Values{
+		"response_type": {"code"}, "client_id": {clientID},
+		"redirect_uri": {"https://rp.example.com/cb"}, "state": {"xyz"}, "scope": {"openid"},
+	}.Encode()
+	authorize := func(token string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", env.ts.URL+target, nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := env.noRedirectClient.Do(req)
+		if err != nil {
+			t.Fatalf("browser authorize: %v", err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode, resp.Header.Get("Location")
+	}
+	goLogin := func(loc string) {
+		t.Helper()
+		if !strings.Contains(loc, "localhost:3000/login") {
+			t.Fatalf("must bounce to the portal login, got %q", loc)
+		}
+	}
+
+	// Sanity: a live token mints codes.
+	status, loc := authorize(alice)
+	if status != 302 || !strings.HasPrefix(loc, "https://rp.example.com/cb") {
+		t.Fatalf("live token must mint codes: %d %q", status, loc)
+	}
+
+	// A disabled user is "no session" even with a perfectly valid token.
+	if err := env.tc.UserRepo().UpdateFields(context.Background(), uid.Id,
+		map[string]any{"status": domain.UserStatusDisabled}); err != nil {
+		t.Fatalf("disable user: %v", err)
+	}
+	status, loc = authorize(alice)
+	if status != 302 {
+		t.Fatalf("disabled user authorize must 302, got %d", status)
+	}
+	goLogin(loc)
+	if err := env.tc.UserRepo().UpdateFields(context.Background(), uid.Id,
+		map[string]any{"status": domain.UserStatusActive}); err != nil {
+		t.Fatalf("re-enable user: %v", err)
+	}
+
+	// A logged-out (jti-denylisted) token is "no session" too.
+	status, _ = env.doJSON("POST", "/api/v1/auth/logout", alice, nil)
+	if status != 204 && status != 200 {
+		t.Fatalf("logout: %d", status)
+	}
+	status, loc = authorize(alice)
+	if status != 302 {
+		t.Fatalf("logged-out authorize must 302, got %d", status)
+	}
+	goLogin(loc)
+
+	// And a fresh login recovers the flow (the denylist, not the endpoint,
+	// was the blocker).
+	status, body := env.doJSON("POST", "/api/v1/auth/login", "", map[string]any{
+		"identifier": "alicebo@test.dev", "password": "AlicePassw0rd",
+	})
+	if status != 200 {
+		t.Fatalf("re-login: %d %v", status, body)
+	}
+	status, loc = authorize(env.str(body, "access_token"))
+	if status != 302 || !strings.HasPrefix(loc, "https://rp.example.com/cb") {
+		t.Fatalf("fresh token must mint codes again: %d %q", status, loc)
+	}
+}

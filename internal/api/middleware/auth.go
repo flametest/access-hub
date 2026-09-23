@@ -84,32 +84,9 @@ func (m *AuthMiddleware) authenticate(c echo.Context) (*jwt.Claims, error) {
 	if raw == "" {
 		return nil, nil
 	}
-	claims, err := m.c.JWT().Parse(raw)
+	claims, err := m.ValidateAccessToken(c.Request().Context(), raw)
 	if err != nil {
 		return nil, err
-	}
-	// MFA challenge tokens are single-purpose: they may only be presented to
-	// the /auth/login/2fa endpoint, never as API credentials.
-	if claims.IsMFAToken() {
-		return nil, verrors.UnauthorizedError("mfa challenge token cannot be used here")
-	}
-	// Logged-out (revoked) access tokens are rejected via the Redis denylist.
-	if claims.ID != "" {
-		switch _, err := m.c.KV().Get(c.Request().Context(), "jwt:deny:"+claims.ID); {
-		case err == nil:
-			return nil, verrors.UnauthorizedError("token has been revoked")
-		case errors.Is(err, kv.ErrNotFound):
-			// not revoked — the normal path
-		default:
-			// KV unavailable: fail-close unless the operator explicitly
-			// opted into the degraded mode (design §10). A silently
-			// fail-open denylist would honor logged-out tokens during an
-			// outage.
-			if !m.c.Cfg().Auth.DenylistFailOpen {
-				return nil, verrors.InternalServerError("token validation temporarily unavailable")
-			}
-			log.Warn().Any("jti", claims.ID).Msg("denylist unavailable (fail-open mode): token accepted without revocation check")
-		}
 	}
 	kind := KindIdentity
 	userID := strings.TrimPrefix(claims.Subject, jwt.SubjectPrefixUser)
@@ -132,6 +109,42 @@ func (m *AuthMiddleware) authenticate(c echo.Context) (*jwt.Claims, error) {
 	}
 	c.Set(ctxKeyClaims, claims)
 	c.Set(ctxKeyAuth, actx)
+	return claims, nil
+}
+
+// ValidateAccessToken is the full access-token validation shared by the
+// middleware and the non-middleware callers that must not trust weaker
+// checks (the browser OAuth authorize endpoint): signature, expiry, the
+// MFA-token single-purpose exclusion and the jti denylist (fail-close
+// unless the operator opted into the degraded mode, design §10).
+func (m *AuthMiddleware) ValidateAccessToken(ctx context.Context, raw string) (*jwt.Claims, error) {
+	claims, err := m.c.JWT().Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	// MFA challenge tokens are single-purpose: they may only be presented to
+	// the /auth/login/2fa endpoint, never as API credentials.
+	if claims.IsMFAToken() {
+		return nil, verrors.UnauthorizedError("mfa challenge token cannot be used here")
+	}
+	// Logged-out (revoked) access tokens are rejected via the Redis denylist.
+	if claims.ID != "" {
+		switch _, err := m.c.KV().Get(ctx, "jwt:deny:"+claims.ID); {
+		case err == nil:
+			return nil, verrors.UnauthorizedError("token has been revoked")
+		case errors.Is(err, kv.ErrNotFound):
+			// not revoked — the normal path
+		default:
+			// KV unavailable: fail-close unless the operator explicitly
+			// opted into the degraded mode (design §10). A silently
+			// fail-open denylist would honor logged-out tokens during an
+			// outage.
+			if !m.c.Cfg().Auth.DenylistFailOpen {
+				return nil, verrors.InternalServerError("token validation temporarily unavailable")
+			}
+			log.Warn().Any("jti", claims.ID).Msg("denylist unavailable (fail-open mode): token accepted without revocation check")
+		}
+	}
 	return claims, nil
 }
 

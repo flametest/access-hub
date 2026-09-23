@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/flametest/access-hub/internal/api/middleware"
+	"github.com/flametest/access-hub/internal/domain"
+	"github.com/flametest/access-hub/internal/infra/jwt"
 	"github.com/flametest/access-hub/internal/service"
 	"github.com/flametest/access-hub/pkg/dto"
 	"github.com/labstack/echo/v4"
@@ -49,8 +51,12 @@ func (h *Handlers) OAuthAuthorize(c echo.Context) error {
 const oauthSessionCookie = "ah.session"
 
 // oauthBrowserIdentity resolves the caller from the Authorization header or
-// the portal session cookie. Only center identity tokens count; anything
-// else (missing, invalid, mfa/client/account tokens) means "no session".
+// the portal session cookie. Only valid, current CENTER identity tokens of
+// an active user count: the full middleware validation (signature, expiry,
+// jti denylist) runs, the audience must be access-hub itself, and the user
+// row must still be active. Anything else (missing, invalid, logged out,
+// mfa/client/account tokens, disabled user) means "no session" — a valid
+// signature alone must never mint long-lived authorization codes.
 func (h *Handlers) oauthBrowserIdentity(c echo.Context) *service.BrowserIdentity {
 	raw := c.Request().Header.Get("Authorization")
 	if parts := strings.SplitN(raw, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
@@ -60,12 +66,18 @@ func (h *Handlers) oauthBrowserIdentity(c echo.Context) *service.BrowserIdentity
 	} else {
 		return nil
 	}
-	claims, err := h.c.JWT().Parse(raw)
+	claims, err := h.AuthMW.ValidateAccessToken(c.Request().Context(), raw)
 	if err != nil || claims == nil ||
-		claims.IsMFAToken() || claims.IsClientToken() || claims.IsAccountToken() {
+		claims.IsMFAToken() || claims.IsClientToken() || claims.IsAccountToken() ||
+		claims.Aud() != jwt.AudienceCentral {
 		return nil
 	}
-	return &service.BrowserIdentity{UserID: strings.TrimPrefix(claims.Subject, "user:")}
+	userID := strings.TrimPrefix(claims.Subject, jwt.SubjectPrefixUser)
+	user, err := h.c.UserRepo().FindByID(c.Request().Context(), userID)
+	if err != nil || user.Status != domain.UserStatusActive {
+		return nil
+	}
+	return &service.BrowserIdentity{UserID: userID}
 }
 
 // AuthorizeBrowser handles GET /oauth2/authorize: 302 to the redirect_uri
