@@ -229,8 +229,11 @@ func TestEmailCodeAttemptLimits(t *testing.T) {
 	}
 
 	// A fresh code verifies once and is consumed (clear the 60s send-rate key
-	// the first send left behind).
+	// the first send left behind, and the login-guard keys the wrong guesses
+	// tripped — this test targets the per-code counter, not the lock).
 	_ = tc.KV().Del(ctx, "rl:sendcode:"+email)
+	_ = tc.KV().Del(ctx, "login:lock:eml:"+email)
+	_ = tc.KV().Del(ctx, "login:lock:ip:7.7.7.7")
 	if err := authSvc.SendEmailCode(ctx, &dto.SendEmailCodeReq{Email: email, Purpose: "login"}, "7.7.7.7"); err != nil {
 		t.Fatalf("send code: %v", err)
 	}
@@ -283,5 +286,69 @@ func TestEmailLoginAutoRegister(t *testing.T) {
 	}
 	if !user.EmailVerified || user.PasswordHash != nil {
 		t.Fatal("auto-registered identity must be verified and passwordless")
+	}
+}
+
+// TestEmailLoginGuessLockoutSurvivesResend pins the brute-force fix: wrong
+// code attempts accumulate into the per-email login lock, and resending a
+// fresh code does NOT reset it — the correct code stays unusable while the
+// lock is held (pre-fix: every 60s resend granted a fresh attempt budget).
+func TestEmailLoginGuessLockoutSurvivesResend(t *testing.T) {
+	tc, authSvc, _ := newAuthEnv(t)
+	ctx := context.Background()
+	email := "brutef@test.dev"
+	seedIdentity(t, tc, "brutef", email, "BrutePassw0rd")
+
+	sendCode := func() string {
+		t.Helper()
+		_ = tc.KV().Del(ctx, "rl:sendcode:"+email)
+		if err := authSvc.SendEmailCode(ctx, &dto.SendEmailCodeReq{Email: email, Purpose: "login"}, "9.9.9.9"); err != nil {
+			t.Fatalf("send code: %v", err)
+		}
+		code := ""
+		for _, line := range strings.Split(tc.Mail.Last().Body, "\n") {
+			if strings.Contains(line, "verification code is:") {
+				code = strings.TrimSpace(strings.Split(line, ":")[1])
+			}
+		}
+		if len(code) != 6 {
+			t.Fatalf("could not extract code from mailer body %q", tc.Mail.Last().Body)
+		}
+		return code
+	}
+
+	sendCode()
+	// EmailCodeMaxAttempts wrong guesses burn the code; the next wrong guess
+	// counts against the login guard and reaches the lock threshold.
+	max := tc.Cfg().Auth.LoginMaxAttempts
+	for i := 0; i < max; i++ {
+		if _, err := authSvc.EmailLogin(ctx, &dto.EmailLoginReq{Email: email, Code: "000000"}, "agent", "9.9.9.9"); err == nil {
+			t.Fatalf("wrong code attempt %d must fail", i+1)
+		}
+	}
+
+	// A resent (correct!) code must NOT bypass the lock.
+	code2 := sendCode()
+	if _, err := authSvc.EmailLogin(ctx, &dto.EmailLoginReq{Email: email, Code: code2}, "agent", "9.9.9.9"); err == nil {
+		t.Fatal("login must stay locked despite a fresh correct code")
+	}
+	if _, err := tc.KV().Get(ctx, "login:lock:eml:"+email); err != nil {
+		t.Fatalf("email lock key must be set: %v", err)
+	}
+
+	// A different IP is not locked by this email's guard on its own — but its
+	// wrong guesses still count toward the email key, so a successful login
+	// from another IP needs a fresh code and works once the email lock
+	// expires. Cover the success path after manually expiring the lock (both
+	// the email and the ip guard keys tripped).
+	_ = tc.KV().Del(ctx, "login:lock:eml:"+email)
+	_ = tc.KV().Del(ctx, "login:lock:ip:9.9.9.9")
+	code3 := sendCode()
+	resp, err := authSvc.EmailLogin(ctx, &dto.EmailLoginReq{Email: email, Code: code3}, "agent", "9.9.9.9")
+	if err != nil {
+		t.Fatalf("login after lock expiry must succeed: %v", err)
+	}
+	if resp.AccessToken == "" {
+		t.Fatal("login must return tokens")
 	}
 }

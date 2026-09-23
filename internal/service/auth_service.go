@@ -314,7 +314,16 @@ func (s *authServiceImpl) checkEmailCode(ctx context.Context, purpose, email, co
 
 func (s *authServiceImpl) EmailLogin(ctx context.Context, req *dto.EmailLoginReq, device, ip string) (*dto.LoginResp, error) {
 	email := normalizeEmail(req.Email)
+	// Sustained-guessing guard keyed per email AND ip: resending a code only
+	// refreshes the per-code attempt budget (checkEmailCode), never this
+	// lock. Without it an attacker would get EmailCodeMaxAttempts fresh
+	// guesses every resend interval — ~5.8k tries/day against a 6-digit code.
+	keys := []string{"eml:" + email, "ip:" + ip}
+	if err := s.checkLoginLock(ctx, keys); err != nil {
+		return nil, err
+	}
 	if err := s.checkEmailCode(ctx, "login", email, req.Code); err != nil {
+		s.recordLoginFailure(ctx, keys)
 		return nil, err
 	}
 	user, err := s.c.UserRepo().FindByEmail(ctx, email)
@@ -343,6 +352,7 @@ func (s *authServiceImpl) EmailLogin(ctx context.Context, req *dto.EmailLoginReq
 	if user.Status != domain.UserStatusActive {
 		return nil, verrors.ForbiddenError("account disabled")
 	}
+	s.clearLoginFailures(ctx, keys)
 	_ = s.c.UserRepo().TouchLastLogin(ctx, user.Id, time.Now())
 	// Same 2FA challenge as the password login (existing identities only;
 	// freshly auto-registered identities have no enrollment).
