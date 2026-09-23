@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/casbin/casbin/v2/model"
@@ -53,6 +54,11 @@ type Loader struct {
 	oauthClientRepo  repository.OAuthClientRepo
 	customRuleRepo   repository.CustomRuleRepo
 	appRepo          repository.AppRepo
+
+	// mu guards nextExpiry: LoadPolicy runs under the synced enforcer's lock
+	// but NextExpiry is read by the expiry scheduler outside it.
+	mu         sync.Mutex
+	nextExpiry time.Time
 }
 
 var _ persist.Adapter = (*Loader)(nil)
@@ -94,6 +100,9 @@ func effectPriority(effect string, allow, deny int) int {
 func (l *Loader) LoadPolicy(m model.Model) error {
 	ctx := context.Background()
 	now := time.Now()
+	l.mu.Lock()
+	l.nextExpiry = time.Time{}
+	l.mu.Unlock()
 
 	// super_admin wildcard seed (independent of role_resources rows).
 	superAdmin, err := l.roleRepo.FindGlobalByCode(ctx, domain.BuiltInRoleSuperAdmin)
@@ -236,6 +245,7 @@ func (l *Loader) loadAccountRoleRules(m model.Model, now time.Time) error {
 		if row.ExpiresAt != nil && row.ExpiresAt.Before(now) {
 			continue
 		}
+		l.observeExpiry(row.ExpiresAt)
 		dom := DomWildcard
 		if row.RoleScope == domain.RoleScopeApp {
 			if row.RoleAppID != row.AccountAppID {
@@ -263,6 +273,7 @@ func (l *Loader) loadAccountGrantRules(m model.Model, now time.Time) error {
 		if row.ExpiresAt != nil && row.ExpiresAt.Before(now) {
 			continue
 		}
+		l.observeExpiry(row.ExpiresAt)
 		effect := row.Effect
 		if effect != EffectAllow && effect != EffectDeny {
 			log.Warn().Any("effect", effect).Any("account", row.AccountID).Msg("account_grants row has unknown effect (skipped)")
@@ -331,6 +342,28 @@ func addRule(m model.Model, sec, ptype string, rule []string) error {
 		return fmt.Errorf("add %s rule %v: %w", ptype, rule, err)
 	}
 	return nil
+}
+
+// observeExpiry records the earliest future expires_at seen while loading
+// (account_roles / account_grants), so the enforcer can schedule a reload
+// for the moment a time-limited binding actually lapses.
+func (l *Loader) observeExpiry(at *time.Time) {
+	if at == nil || at.Before(time.Now()) {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.nextExpiry.IsZero() || at.Before(l.nextExpiry) {
+		l.nextExpiry = *at
+	}
+}
+
+// NextExpiry reports the earliest future expires_at among the rows of the
+// most recently completed load (false when no row carries one).
+func (l *Loader) NextExpiry() (time.Time, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.nextExpiry, !l.nextExpiry.IsZero()
 }
 
 // SavePolicy is unsupported (read-only adapter).

@@ -403,3 +403,34 @@ func TestPolicyVersion(t *testing.T) {
 		t.Fatalf("key = %q", got)
 	}
 }
+
+func TestExpiringGrantStopsApplyingAtRuntime(t *testing.T) {
+	// A time-limited direct grant must actually lapse: the enforcer schedules
+	// a reload at the loader's reported next expiry (the pre-fix behavior
+	// kept the rule active until the next unrelated reload).
+	f := newFixture(t)
+	account := f.seedAccount(t, f.appA, "active", "tempgrantee")
+	soon := time.Now().Add(900 * time.Millisecond)
+	mustCreate(t, f.db, &model.AccountGrant{
+		AccountID:  account.Id,
+		ResourceID: f.resReadA.Id,
+		GrantedAt:  time.Now(),
+		ExpiresAt:  &soon,
+		Effect:     "allow",
+	})
+
+	en := f.newEnforcer(t)
+	next, ok := en.loader.NextExpiry()
+	if !ok || time.Until(next) > time.Second {
+		t.Fatalf("loader must report the grant's expiry, got %v (%v)", next, ok)
+	}
+	runChecks(t, en, []check{
+		{"grant active within its window", "account:" + account.Id, "app:app-a", "order:read", "GET", true},
+	})
+
+	// Past the expiry the scheduled reload must have dropped the rule.
+	time.Sleep(2 * time.Second)
+	runChecks(t, en, []check{
+		{"grant expired after the scheduled reload", "account:" + account.Id, "app:app-a", "order:read", "GET", false},
+	})
+}

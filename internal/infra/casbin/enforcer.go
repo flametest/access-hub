@@ -3,15 +3,21 @@ package casbinx
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	log "github.com/flametest/vita/vlog"
-	"time"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
 	"github.com/flametest/vita/verrors"
 )
+
+// maxExpiryReloadDelay caps the expiry-driven reload sleep: far-future
+// expiries are re-checked (and re-scheduled) periodically instead of
+// scheduling months out, so row changes are picked up en route.
+const maxExpiryReloadDelay = time.Hour
 
 // Enforcer wraps casbin.SyncedEnforcer with the access-hub model. Policy
 // auto-load and auto-save are OFF: the full set is loaded explicitly from the
@@ -20,6 +26,10 @@ import (
 type Enforcer struct {
 	e       *casbin.SyncedEnforcer
 	watcher persist.Watcher
+
+	loader      *Loader // nil when built over a foreign adapter
+	timerMu     sync.Mutex
+	expiryTimer *time.Timer
 }
 
 // NewEnforcer creates the enforcer with the given (read-only) adapter,
@@ -38,6 +48,9 @@ func NewEnforcer(loader persist.Adapter) (*Enforcer, error) {
 	}
 	e.EnableAutoSave(false)
 	en := &Enforcer{e: e}
+	if ldr, ok := loader.(*Loader); ok {
+		en.loader = ldr
+	}
 	// The ABAC matcher function must be registered before the first Enforce:
 	// govaluate resolves function names when the matcher expression is first
 	// compiled (and caches it), so a late registration would not take effect.
@@ -45,6 +58,7 @@ func NewEnforcer(loader persist.Adapter) (*Enforcer, error) {
 	if err := e.LoadPolicy(); err != nil {
 		return nil, verrors.Wrap(err, "load casbin policies")
 	}
+	en.scheduleExpiryReload()
 	return en, nil
 }
 
@@ -132,7 +146,38 @@ func (en *Enforcer) Reload() error {
 	if err := en.e.LoadPolicy(); err != nil {
 		return verrors.Wrap(err, "reload casbin policies")
 	}
+	en.scheduleExpiryReload()
 	return nil
+}
+
+// scheduleExpiryReload arms the timer that forces a full reload when the
+// soonest expiring policy row (account_roles / account_grants carries
+// expires_at) actually lapses — without it, a "temporary 2 hours" grant
+// would keep applying until the next unrelated reload. Every successful
+// full load re-arms from fresh loader data; delays are capped by
+// maxExpiryReloadDelay.
+func (en *Enforcer) scheduleExpiryReload() {
+	if en.loader == nil {
+		return
+	}
+	next, ok := en.loader.NextExpiry()
+	if !ok {
+		return
+	}
+	d := time.Until(next) + 250*time.Millisecond
+	if d < 250*time.Millisecond {
+		d = 250 * time.Millisecond
+	}
+	if d > maxExpiryReloadDelay {
+		d = maxExpiryReloadDelay
+	}
+	en.timerMu.Lock()
+	defer en.timerMu.Unlock()
+	if en.expiryTimer != nil {
+		en.expiryTimer.Reset(d)
+		return
+	}
+	en.expiryTimer = time.AfterFunc(d, en.reloadWithRetry)
 }
 
 // AddPolicy applies an incremental 7-tuple p rule
