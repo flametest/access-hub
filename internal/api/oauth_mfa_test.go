@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1277,5 +1278,43 @@ func TestBrowserAuthorizeRejectsLoggedOutOrDisabledCaller(t *testing.T) {
 	status, loc = authorize(env.str(body, "access_token"))
 	if status != 302 || !strings.HasPrefix(loc, "https://rp.example.com/cb") {
 		t.Fatalf("fresh token must mint codes again: %d %q", status, loc)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 2f. invitation accept: a logged-in identity may only claim invitations
+// addressed to their own email (a leaked/forwarded code is not a bearer
+// credential for whoever is signed in).
+// ---------------------------------------------------------------------------
+
+func TestInvitationAcceptRequiresEmailMatch(t *testing.T) {
+	env := newOAuthEnv(t)
+	roleID := env.createAppWithRole("crmi")
+	mallory := env.registerIdentity("malloryi", "malloryi@test.dev", "MalloryPass1")
+	status, body := env.doJSON("POST", "/api/v1/admin/apps/crmi/invitations", env.rootToken, map[string]any{
+		"email": "adai@test.dev", "role_ids": []string{roleID},
+	})
+	if status != 201 {
+		t.Fatalf("create invitation: %d %v", status, body)
+	}
+	reHex := regexp.MustCompile(`\b[0-9a-f]{64}\b`)
+	code := reHex.FindString(env.tc.Mail.Last().Body)
+	if code == "" {
+		t.Fatalf("invitation code not found in mail: %q", env.tc.Mail.Last().Body)
+	}
+
+	// Mallory (signed in) must not be able to claim ada's invitation.
+	status, body = env.doJSON("POST", "/api/v1/invitations/accept", mallory, map[string]any{"code": code})
+	if status != 403 {
+		t.Fatalf("accepting someone else's invitation must 403, got %d %v", status, body)
+	}
+
+	// The invitation is untouched: the real invitee (anonymous auto-provision
+	// path) can still redeem it.
+	status, body = env.doJSON("POST", "/api/v1/invitations/accept", "", map[string]any{
+		"code": code, "new_password": "AdaiPassw0rd1",
+	})
+	if status != 200 {
+		t.Fatalf("real invitee accept: %d %v", status, body)
 	}
 }

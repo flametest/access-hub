@@ -138,10 +138,16 @@ func (s *invitationServiceImpl) Accept(ctx context.Context, req *dto.AcceptReq, 
 
 	switch {
 	case actx != nil && actx.Kind == "identity":
-		// Logged-in caller: bind the new account to their identity.
+		// Logged-in caller: bind the new account to their identity — but only
+		// when the invitation was addressed to THEM: a leaked or forwarded
+		// code must not be redeemable by whichever identity happens to be
+		// signed in, and the created account carries the invited email.
 		user, err := s.c.UserRepo().FindByID(ctx, actx.UserID)
 		if err != nil || user.Status != domain.UserStatusActive {
 			return nil, verrors.ForbiddenError("identity must be active to accept invitations")
+		}
+		if normalizeEmail(user.Email) != normalizeEmail(invitation.Email) {
+			return nil, verrors.ForbiddenError("this invitation was sent to a different email address")
 		}
 		identityID = user.Id
 		if req.NewPassword != "" {
