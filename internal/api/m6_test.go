@@ -521,3 +521,31 @@ func TestCustomRulePriorityFloorAndDuplicates(t *testing.T) {
 		t.Fatalf("update into a duplicate must 409, got %d %v", status, body)
 	}
 }
+
+// TestBatchResourcesRouteIsExact pins the escaped-colon route: PUT
+// .../resources\:batch must match ONLY the batch endpoint, not act as a
+// wildcard /resources/:param route swallowing arbitrary suffixes.
+func TestBatchResourcesRouteIsExact(t *testing.T) {
+	env := newOAuthEnv(t)
+	root := env.rootToken
+	env.doJSON("POST", "/api/v1/admin/orgs", root, map[string]any{"key": "m6rorg", "name": "M6R"})
+	env.doJSON("POST", "/api/v1/admin/apps", root, map[string]any{
+		"key": "m6r", "org_key": "m6rorg", "name": "M6R App", "type": "web"})
+
+	// The real batch endpoint still works.
+	status, body := env.doJSON("PUT", "/api/v1/admin/apps/m6r/resources:batch", root, map[string]any{
+		"items": []any{map[string]any{"type": "api", "code": "m6r:r", "name": "R", "method": "GET", "route_path": "/r"}},
+	})
+	if status != 200 {
+		t.Fatalf("batch import: %d %v", status, body)
+	}
+	// An arbitrary /resources/* suffix must NOT be swallowed by the batch
+	// route (pre-fix Echo parsed "batch" as a path parameter, so any suffix
+	// landed in the batch handler).
+	status, body = env.doJSON("PUT", "/api/v1/admin/apps/m6r/resources/nonsense-suffix", root, map[string]any{
+		"items": []any{},
+	})
+	if status != 404 && status != 405 {
+		t.Fatalf("arbitrary resources suffix must 404/405, got %d %v", status, body)
+	}
+}

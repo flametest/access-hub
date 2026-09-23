@@ -116,7 +116,9 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/resources", auth.RequireAdmin("admin:resource:manage")(h.AdminCreateResource))
 	e.Add(http.MethodPatch, "/api/v1/admin/apps/:appKey/resources/:resourceId", auth.RequireAdmin("admin:resource:manage")(h.AdminUpdateResource))
 	e.Add(http.MethodDelete, "/api/v1/admin/apps/:appKey/resources/:resourceId", auth.RequireAdmin("admin:resource:manage")(h.AdminDeleteResource))
-	e.Add(http.MethodPut, "/api/v1/admin/apps/:appKey/resources:batch", auth.RequireAdmin("admin:resource:manage")(h.AdminBatchResources))
+	// The escaped colon keeps Echo from parsing "batch" as a path parameter
+	// (which would make this route match ANY /resources/* suffix).
+	e.Add(http.MethodPut, "/api/v1/admin/apps/:appKey/resources\\:batch", auth.RequireAdmin("admin:resource:manage")(h.AdminBatchResources))
 
 	e.Add(http.MethodGet, "/api/v1/admin/apps/:appKey/roles", auth.RequireAdmin("admin:role:read")(h.AdminListRoles))
 	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/roles", auth.RequireAdmin("admin:role:manage")(h.AdminCreateRole))
