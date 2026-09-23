@@ -37,11 +37,14 @@ const (
 
 // Token type markers (Claims.Typ). "" is the classic access token issued by
 // M1-M3 flows; "mfa" marks the short-lived 2FA login challenge; "client"
-// marks an OAuth2 client_credentials service token.
+// marks an OAuth2 client_credentials service token; "id" marks the OIDC
+// ID token so it can never pass for an access token even though both share
+// the RS256 signing key.
 const (
 	TypeAccess = ""
 	TypeMFA    = "mfa"
 	TypeClient = "client"
+	TypeID     = "id"
 )
 
 // Claims are access-hub access-token claims. aud serializes as a plain JSON
@@ -127,6 +130,7 @@ func (c *Claims) IsClientToken() bool { return c.Typ == TypeClient }
 // token claim shape stays backward compatible.
 type IDTokenClaims struct {
 	jwt.RegisteredClaims
+	Typ    string `json:"typ,omitempty"`     // always TypeID ("id")
 	Nonce  string `json:"nonce,omitempty"`   // authorization-request nonce
 	AtHash string `json:"at_hash,omitempty"` // left half of SHA-256(access token), base64url
 	Sid    string `json:"sid,omitempty"`     // optional session binding
@@ -145,6 +149,7 @@ func NewIDTokenClaims(issuer, subject, audience, nonce, atHash, sessionID string
 			IssuedAt:  jwt.NewNumericDate(now),
 			ID:        uuid.NewString(),
 		},
+		Typ:    TypeID,
 		Nonce:  nonce,
 		AtHash: atHash,
 		Sid:    sessionID,
@@ -236,12 +241,15 @@ func (m *Manager) IssueIDToken(claims *IDTokenClaims) (string, error) {
 }
 
 // Parse verifies the token signature (RS256 only) and standard claims
-// including a mandatory exp. It does not check session revocation — callers
-// consult the Redis denylist separately.
+// including a mandatory exp and the access-hub issuer — an OIDC ID token
+// (iss = the discovery issuer URL, typ = "id") therefore fails here instead
+// of decoding into access-token claims. It does not check session
+// revocation — callers consult the Redis denylist separately.
 func (m *Manager) Parse(token string) (*Claims, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
 		jwt.WithExpirationRequired(),
+		jwt.WithIssuer(Issuer),
 	)
 	var claims Claims
 	if _, err := parser.ParseWithClaims(token, &claims, func(t *jwt.Token) (interface{}, error) {

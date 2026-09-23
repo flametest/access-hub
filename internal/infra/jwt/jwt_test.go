@@ -189,3 +189,33 @@ func TestNewManagerFailsOnMissingFiles(t *testing.T) {
 		t.Fatal("missing key files must fail fast")
 	}
 }
+
+// TestParseRejectsIDToken pins the iss/typ tightening: an OIDC ID token
+// (iss = the discovery issuer URL, typ = "id") shares the RS256 key with
+// access tokens but must never decode as one.
+func TestParseRejectsIDToken(t *testing.T) {
+	privatePath, publicPath := writeKeyPair(t)
+	m, err := NewManager(privatePath, publicPath)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+	signed, err := m.IssueIDToken(NewIDTokenClaims(
+		"https://id.example.com", "account:acc-1", "crm", "n-1", "at-hash", "", time.Minute,
+	))
+	if err != nil {
+		t.Fatalf("issue id_token: %v", err)
+	}
+	if _, err := m.Parse(signed); err == nil {
+		t.Fatal("an OIDC id_token must not parse as an access token (iss/typ)")
+	}
+	// A forged access-token-shaped token carrying a foreign iss is rejected.
+	claims := NewIdentityClaims("u-1", "sess-1", "alice", "a@b.c", time.Minute)
+	claims.Issuer = "https://evil.example"
+	forged, err := m.Issue(claims)
+	if err != nil {
+		t.Fatalf("issue forged: %v", err)
+	}
+	if _, err := m.Parse(forged); err == nil {
+		t.Fatal("a token with a foreign iss must be rejected")
+	}
+}
