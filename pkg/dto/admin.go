@@ -421,7 +421,7 @@ type CreateCustomRuleReq struct {
 	Name     string `json:"name" validate:"required,max=255"`
 	Expr     string `json:"expr" validate:"required,max=4096"`
 	Effect   string `json:"effect" validate:"required,oneof=allow deny"`
-	Priority *int   `json:"priority" validate:"omitempty,min=1,max=100"`
+	Priority *int   `json:"priority" validate:"omitempty,min=2,max=100"`
 	Status   string `json:"status" validate:"omitempty,oneof=active disabled"`
 }
 
@@ -431,7 +431,7 @@ type UpdateCustomRuleReq struct {
 	Name     *string `json:"name" validate:"omitempty,max=255"`
 	Expr     *string `json:"expr" validate:"omitempty,max=4096"`
 	Effect   *string `json:"effect" validate:"omitempty,oneof=allow deny"`
-	Priority *int    `json:"priority" validate:"omitempty,min=1,max=100"`
+	Priority *int    `json:"priority" validate:"omitempty,min=2,max=100"`
 	Status   *string `json:"status" validate:"omitempty,oneof=active disabled"`
 }
 

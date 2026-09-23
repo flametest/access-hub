@@ -8,6 +8,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/flametest/access-hub/internal/container"
@@ -81,6 +82,35 @@ func (s *adminCustomRuleServiceImpl) List(ctx context.Context, actor *AdminActor
 	return out, nil
 }
 
+// checkRuleFloor rejects custom-rule priorities that reach into the
+// super_admin rung of the ladder.
+func checkRuleFloor(priority int) error {
+	if priority < casbinx.PriorityCustomRuleMin {
+		return verrors.BadRequestError(fmt.Sprintf("priority must be >= %d: 1 is reserved for super_admin", casbinx.PriorityCustomRuleMin))
+	}
+	return nil
+}
+
+// rejectDuplicateRule refuses a second ACTIVE rule with the same
+// (expr, effect, priority): identical rules collapse into one in-memory
+// casbin tuple, so deleting one row would silently disable its twin until
+// the next full reload.
+func (s *adminCustomRuleServiceImpl) rejectDuplicateRule(ctx context.Context, appID, exceptID, expr, effect string, priority int) error {
+	rows, err := s.c.CustomRuleRepo().ListByApp(ctx, appID)
+	if err != nil {
+		return verrors.Wrap(err, "list custom rules")
+	}
+	for _, r := range rows {
+		if r.Id == exceptID || r.Status != model.CustomRuleStatusActive {
+			continue
+		}
+		if r.Expr == expr && r.Effect == effect && r.Priority == priority {
+			return verrors.ConflictError("an active custom rule with the same expression, effect and priority already exists in the app")
+		}
+	}
+	return nil
+}
+
 // createDefaults fills effect/priority/status defaults shared by Create
 // (effect/status are validated by the DTO tags; defaults are defense in
 // depth).
@@ -115,6 +145,14 @@ func (s *adminCustomRuleServiceImpl) Create(ctx context.Context, actor *AdminAct
 		return nil, err
 	}
 	effect, priority, status := createDefaults(req)
+	if err := checkRuleFloor(priority); err != nil {
+		return nil, err
+	}
+	if status == model.CustomRuleStatusActive {
+		if err := s.rejectDuplicateRule(ctx, app.Id, "", req.Expr, effect, priority); err != nil {
+			return nil, err
+		}
+	}
 	row := &model.CustomRule{
 		BasePostgres: vgorm.BasePostgres{Id: uuid.NewString()},
 		AppID:        app.Id,
@@ -175,6 +213,32 @@ func (s *adminCustomRuleServiceImpl) Update(ctx context.Context, actor *AdminAct
 	}
 	if req.Expr != nil {
 		if err := validateExpr(*req.Expr); err != nil {
+			return nil, err
+		}
+	}
+	// The post-write shape (existing row + patch) drives floor + duplicate
+	// validation; a disabled final status makes duplicates moot.
+	finalExpr := row.Expr
+	if req.Expr != nil {
+		finalExpr = *req.Expr
+	}
+	finalEffect := row.Effect
+	if req.Effect != nil {
+		finalEffect = *req.Effect
+	}
+	finalPriority := row.Priority
+	if req.Priority != nil {
+		finalPriority = *req.Priority
+	}
+	finalStatus := row.Status
+	if req.Status != nil {
+		finalStatus = *req.Status
+	}
+	if err := checkRuleFloor(finalPriority); err != nil {
+		return nil, err
+	}
+	if finalStatus == model.CustomRuleStatusActive {
+		if err := s.rejectDuplicateRule(ctx, app.Id, row.Id, finalExpr, finalEffect, finalPriority); err != nil {
 			return nil, err
 		}
 	}

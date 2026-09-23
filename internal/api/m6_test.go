@@ -464,3 +464,60 @@ func TestM6CustomRulesAndDeny(t *testing.T) {
 		t.Fatalf("days clamp = %v", body)
 	}
 }
+
+// TestCustomRulePriorityFloorAndDuplicates pins the ladder guard (priority 1
+// is reserved for super_admin) and the duplicate-tuple guard (two ACTIVE
+// rules with identical expr/effect/priority would share one in-memory
+// casbin tuple, so deleting one would disable its twin).
+func TestCustomRulePriorityFloorAndDuplicates(t *testing.T) {
+	env := newOAuthEnv(t)
+	root := env.rootToken
+	env.doJSON("POST", "/api/v1/admin/orgs", root, map[string]any{"key": "m6dorg", "name": "M6D"})
+	env.doJSON("POST", "/api/v1/admin/apps", root, map[string]any{
+		"key": "m6d", "org_key": "m6dorg", "name": "M6D App", "type": "web"})
+
+	// Priority 1 (the super_admin rung) is refused.
+	status, body := env.doJSON("POST", "/api/v1/admin/apps/m6d/custom-rules", root, map[string]any{
+		"name": "low", "expr": `obj == "x"`, "effect": "allow", "priority": 1})
+	if status != 400 {
+		t.Fatalf("priority 1 must be refused, got %d %v", status, body)
+	}
+	// Priority 2 is the floor and works.
+	status, body = env.doJSON("POST", "/api/v1/admin/apps/m6d/custom-rules", root, map[string]any{
+		"name": "floor", "expr": `obj == "x"`, "effect": "allow", "priority": 2})
+	if status != 201 {
+		t.Fatalf("priority 2 must be accepted, got %d %v", status, body)
+	}
+
+	// A second ACTIVE rule with the same (expr, effect, priority) conflicts.
+	status, body = env.doJSON("POST", "/api/v1/admin/apps/m6d/custom-rules", root, map[string]any{
+		"name": "twin", "expr": `obj == "x"`, "effect": "allow", "priority": 2})
+	if status != 409 {
+		t.Fatalf("duplicate active rule must 409, got %d %v", status, body)
+	}
+	// Different priority: fine.
+	status, _ = env.doJSON("POST", "/api/v1/admin/apps/m6d/custom-rules", root, map[string]any{
+		"name": "other-prio", "expr": `obj == "x"`, "effect": "allow", "priority": 3})
+	if status != 201 {
+		t.Fatalf("same expr at another priority must be accepted, got %d", status)
+	}
+	// Disabled twin: allowed (it never enters the policy set).
+	status, _ = env.doJSON("POST", "/api/v1/admin/apps/m6d/custom-rules", root, map[string]any{
+		"name": "disabled-twin", "expr": `obj == "x"`, "effect": "allow", "priority": 2, "status": "disabled"})
+	if status != 201 {
+		t.Fatalf("disabled duplicate must be accepted, got %d", status)
+	}
+
+	// Updating a rule into an existing duplicate is refused too.
+	status, body = env.doJSON("POST", "/api/v1/admin/apps/m6d/custom-rules", root, map[string]any{
+		"name": "updater", "expr": `obj == "y"`, "effect": "allow", "priority": 2})
+	if status != 201 {
+		t.Fatalf("seed updater: %d %v", status, body)
+	}
+	updaterID := env.str(body, "id")
+	status, body = env.doJSON("PATCH", "/api/v1/admin/apps/m6d/custom-rules/"+updaterID, root, map[string]any{
+		"expr": `obj == "x"`, "priority": 3})
+	if status != 409 {
+		t.Fatalf("update into a duplicate must 409, got %d %v", status, body)
+	}
+}

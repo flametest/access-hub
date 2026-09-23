@@ -52,6 +52,10 @@ m = (r.sub == p.sub || p.sub == "*" || g(r.sub, p.sub, r.dom) || g(r.sub, p.sub,
 //	client (service)      60
 const (
 	PrioritySuperAdmin        = 1
+	// PriorityCustomRuleMin is the lowest priority a custom rule may carry:
+	// 1 is reserved for the super_admin wildcard so a custom rule can never
+	// tie (and possibly outrank) it on the ladder.
+	PriorityCustomRuleMin     = 2
 	PriorityGrantDeny         = 20
 	PriorityGrantAllow        = 30
 	PriorityCustomRuleDefault = 40
