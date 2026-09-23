@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/flametest/access-hub/internal/api/middleware"
 	"github.com/flametest/access-hub/internal/domain"
@@ -13,16 +14,43 @@ import (
 
 // ---------- social login (M5; public browser endpoints) ----------
 
+// socialBrowserCookie carries the HttpOnly nonce that binds the social state
+// to the browser that started the flow (login/link CSRF defense): Start sets
+// it, Callback requires it back.
+const socialBrowserCookie = "ah.social"
+
+// setSocialBrowserCookie delivers the Start-issued browser-binding nonce.
+func (h *Handlers) setSocialBrowserCookie(c echo.Context, nonce string) {
+	http.SetCookie(c.Response(), &http.Cookie{
+		Name:     socialBrowserCookie,
+		Value:    nonce,
+		Path:     "/api/v1/auth/social",
+		MaxAge:   600, // matches the server-side state TTL (10 min)
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   strings.HasPrefix(h.c.Cfg().Auth.IssuerURL, "https://"),
+	})
+}
+
+// browserNonce reads the browser-binding cookie ("" when absent).
+func browserNonce(c echo.Context) string {
+	if cookie, err := c.Cookie(socialBrowserCookie); err == nil {
+		return cookie.Value
+	}
+	return ""
+}
+
 // SocialStart handles GET /api/v1/auth/social/{provider}/start. mode=login is
 // anonymous; mode=link needs the caller's identity token (the service answers
 // 401 when it is missing). The response is a 302 to the provider
-// authorization URL.
+// authorization URL plus the browser-binding cookie.
 func (h *Handlers) SocialStart(c echo.Context) error {
-	url, err := h.Social.Start(c.Request().Context(), c.Param("provider"),
+	url, nonce, err := h.Social.Start(c.Request().Context(), c.Param("provider"),
 		c.QueryParam("redirect"), c.QueryParam("mode"), authInfo(c))
 	if err != nil {
 		return err
 	}
+	h.setSocialBrowserCookie(c, nonce)
 	return c.Redirect(http.StatusFound, url)
 }
 
@@ -42,7 +70,7 @@ func (h *Handlers) SocialCallback(c echo.Context) error {
 		return c.Redirect(http.StatusFound, res.RedirectURL)
 	}
 	res, err := h.Social.Callback(c.Request().Context(), c.Param("provider"),
-		c.QueryParam("code"), c.QueryParam("state"), nil)
+		c.QueryParam("code"), c.QueryParam("state"), nil, browserNonce(c))
 	if err != nil {
 		return err
 	}
@@ -73,7 +101,7 @@ func (h *Handlers) AppleCallback(c echo.Context) error {
 		return renderSocialOutcome(c, res)
 	}
 	res, err := h.Social.Callback(c.Request().Context(), domain.SocialProviderApple,
-		form.Get("code"), form.Get("state"), form)
+		form.Get("code"), form.Get("state"), form, browserNonce(c))
 	if err != nil {
 		return err
 	}

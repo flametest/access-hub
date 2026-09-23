@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,13 +56,17 @@ const (
 )
 
 // socialState is the payload stored server-side behind the opaque state
-// parameter (kv, 10 min TTL, consumed once).
+// parameter (kv, 10 min TTL, consumed once). Browser carries the
+// browser-binding nonce that Start hands out as an HttpOnly cookie and
+// Callback requires back — the login/link CSRF defense (an attacker cannot
+// graft their provider session onto a victim's browser without the cookie).
 type socialState struct {
 	Provider string `json:"provider"`
 	Redirect string `json:"redirect"`
 	Mode     string `json:"mode"` // login | link
 	UserID   string `json:"user_id,omitempty"`
 	Nonce    string `json:"nonce"`
+	Browser  string `json:"browser"`
 }
 
 // socialLoginCode is the payload behind the one-time login_code.
@@ -87,12 +92,15 @@ type SocialCallbackResult struct {
 // start -> provider -> callback -> (identity resolution) -> one-time
 // login_code -> POST /auth/social/complete -> tokens (or the 2FA challenge).
 type SocialService interface {
-	// Start builds the provider authorization URL. mode=link binds the new
-	// provider identity to the caller (identity token required).
-	Start(ctx context.Context, providerID, redirect, mode string, actx *AuthContextInfo) (string, error)
+	// Start builds the provider authorization URL plus the browser-binding
+	// nonce (the caller must deliver it to the browser as an HttpOnly
+	// cookie). mode=link binds the new provider identity to the caller
+	// (identity token required).
+	Start(ctx context.Context, providerID, redirect, mode string, actx *AuthContextInfo) (authURL, browserNonce string, err error)
 	// Callback consumes the one-time state, resolves the profile and returns
-	// the browser outcome. form is non-nil for POST (form_post) callbacks.
-	Callback(ctx context.Context, providerID, code, state string, form social.Form) (*SocialCallbackResult, error)
+	// the browser outcome. form is non-nil for POST (form_post) callbacks;
+	// browserNonce is the value of the browser-binding cookie set at Start.
+	Callback(ctx context.Context, providerID, code, state string, form social.Form, browserNonce string) (*SocialCallbackResult, error)
 	// ProviderFailure builds the browser outcome for a provider-side error
 	// (the provider redirected back with ?error=..., e.g. the user denied
 	// consent): it consumes the one-time state when present and answers with
@@ -119,44 +127,50 @@ func NewSocialService(c container.Container) SocialService {
 
 // ---------- start ----------
 
-func (s *socialServiceImpl) Start(ctx context.Context, providerID, redirect, mode string, actx *AuthContextInfo) (string, error) {
+func (s *socialServiceImpl) Start(ctx context.Context, providerID, redirect, mode string, actx *AuthContextInfo) (string, string, error) {
 	p := s.provider(providerID)
 	if p == nil || !p.Enabled() {
-		return "", verrors.NotFoundError("social provider not available")
+		return "", "", verrors.NotFoundError("social provider not available")
 	}
 	if mode == "" {
 		mode = SocialModeLogin
 	}
 	if mode != SocialModeLogin && mode != SocialModeLink {
-		return "", verrors.BadRequestError("mode must be login or link")
+		return "", "", verrors.BadRequestError("mode must be login or link")
 	}
 	state := &socialState{Provider: providerID, Mode: mode}
 	switch mode {
 	case SocialModeLink:
 		if actx == nil || actx.Kind != "identity" {
-			return "", verrors.UnauthorizedError("authentication required to link a social identity")
+			return "", "", verrors.UnauthorizedError("authentication required to link a social identity")
 		}
 		state.UserID = actx.UserID
 	default:
 		state.Redirect = sanitizeRedirect(redirect, socialDefaultRedirect)
 	}
+	browserNonce, err := randomHex(16) // 32 hex chars
+	if err != nil {
+		return "", "", verrors.InternalServerError(fmt.Sprintf("generate browser nonce: %v", err))
+	}
+	state.Browser = browserNonce
 	raw, err := json.Marshal(state)
 	if err != nil {
-		return "", verrors.InternalServerError(fmt.Sprintf("marshal social state: %v", err))
+		return "", "", verrors.InternalServerError(fmt.Sprintf("marshal social state: %v", err))
 	}
 	stateToken, err := randomHex(16) // 32 hex chars
 	if err != nil {
-		return "", verrors.InternalServerError(fmt.Sprintf("generate social state: %v", err))
+		return "", "", verrors.InternalServerError(fmt.Sprintf("generate social state: %v", err))
 	}
 	if err := s.c.KV().Set(ctx, kvSocialStatePrefix+stateToken, string(raw), socialStateTTL); err != nil {
-		return "", verrors.Wrap(err, "store social state")
+		return "", "", verrors.Wrap(err, "store social state")
 	}
-	return p.AuthCodeURL(s.callbackURL(providerID), stateToken), nil
+	url := p.AuthCodeURL(s.callbackURL(providerID), stateToken)
+	return url, browserNonce, nil
 }
 
 // ---------- callback ----------
 
-func (s *socialServiceImpl) Callback(ctx context.Context, providerID, code, state string, form social.Form) (*SocialCallbackResult, error) {
+func (s *socialServiceImpl) Callback(ctx context.Context, providerID, code, state string, form social.Form, browserNonce string) (*SocialCallbackResult, error) {
 	p := s.provider(providerID)
 	if p == nil || !p.Enabled() {
 		return nil, verrors.NotFoundError("social provider not available")
@@ -165,6 +179,16 @@ func (s *socialServiceImpl) Callback(ctx context.Context, providerID, code, stat
 	statePayload, err := s.consumeState(ctx, providerID, state)
 	if err != nil {
 		return s.failResult(nil, form, socialErrInvalidState), nil
+	}
+	// Browser binding: the state was issued together with an HttpOnly cookie
+	// that must come back with this callback. Without it, an attacker could
+	// send a victim their start URL and graft the attacker's provider
+	// session onto the victim's browser (login CSRF — or, in link mode,
+	// silently bind the victim's social identity to the attacker's account).
+	if browserNonce == "" || statePayload.Browser == "" ||
+		len(browserNonce) != len(statePayload.Browser) ||
+		subtle.ConstantTimeCompare([]byte(browserNonce), []byte(statePayload.Browser)) != 1 {
+		return s.failResult(statePayload, form, socialErrInvalidState), nil
 	}
 
 	profile, err := s.exchangeProfile(ctx, p, providerID, code, form)

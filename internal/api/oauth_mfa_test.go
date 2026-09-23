@@ -39,6 +39,9 @@ type oauthEnv struct {
 
 	rootToken        string
 	noRedirectClient *http.Client
+	// socialCookie is the browser-binding cookie captured by the most recent
+	// socialStart call (the social CSRF defense under test).
+	socialCookie *http.Cookie
 }
 
 func newOAuthEnv(t *testing.T) *oauthEnv {

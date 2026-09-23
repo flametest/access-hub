@@ -54,7 +54,8 @@ func newFakeSocial(id, email string, verified bool) *fakeSocialProvider {
 	}
 }
 
-// socialStart drives the start endpoint and returns the captured state.
+// socialStart drives the start endpoint, captures the browser-binding cookie
+// and returns the redirect target.
 func (e *oauthEnv) socialStart(provider, mode, token string) string {
 	e.t.Helper()
 	req, err := http.NewRequest(http.MethodGet,
@@ -74,13 +75,54 @@ func (e *oauthEnv) socialStart(provider, mode, token string) string {
 	if resp.StatusCode != http.StatusFound || loc == "" {
 		e.t.Fatalf("start: status=%d want 302 with Location", resp.StatusCode)
 	}
+	for _, ck := range resp.Cookies() {
+		if ck.Name == "ah.social" {
+			e.socialCookie = ck
+		}
+	}
+	if e.socialCookie == nil {
+		e.t.Fatalf("start must set the %s browser-binding cookie", "ah.social")
+	}
 	return loc
 }
 
-// socialCallback drives the provider callback and returns the redirect target.
+// socialCallback drives the provider callback (sending the browser-binding
+// cookie captured at start) and returns the redirect target.
 func (e *oauthEnv) socialCallback(provider, code, state string) string {
 	e.t.Helper()
-	resp, err := e.noRedirectClient.Get(e.ts.URL + fmt.Sprintf("/api/v1/auth/social/%s/callback?code=%s&state=%s", provider, code, url.QueryEscape(state)))
+	req, err := http.NewRequest(http.MethodGet,
+		e.ts.URL+fmt.Sprintf("/api/v1/auth/social/%s/callback?code=%s&state=%s", provider, code, url.QueryEscape(state)), nil)
+	if err != nil {
+		e.t.Fatalf("callback request: %v", err)
+	}
+	if e.socialCookie != nil {
+		req.AddCookie(e.socialCookie)
+	}
+	resp, err := e.noRedirectClient.Do(req)
+	if err != nil {
+		e.t.Fatalf("callback: %v", err)
+	}
+	defer resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode != http.StatusFound || loc == "" {
+		e.t.Fatalf("callback: status=%d want 302 with Location", resp.StatusCode)
+	}
+	return loc
+}
+
+// socialCallbackRaw drives the callback with an explicit browser nonce (""=
+// no cookie) — the CSRF negative path.
+func (e *oauthEnv) socialCallbackRaw(provider, code, state, nonce string) string {
+	e.t.Helper()
+	req, err := http.NewRequest(http.MethodGet,
+		e.ts.URL+fmt.Sprintf("/api/v1/auth/social/%s/callback?code=%s&state=%s", provider, code, url.QueryEscape(state)), nil)
+	if err != nil {
+		e.t.Fatalf("callback request: %v", err)
+	}
+	if nonce != "" {
+		req.AddCookie(&http.Cookie{Name: "ah.social", Value: nonce})
+	}
+	resp, err := e.noRedirectClient.Do(req)
 	if err != nil {
 		e.t.Fatalf("callback: %v", err)
 	}
@@ -327,4 +369,41 @@ func enable2FA(t *testing.T, env *oauthEnv, identityToken string) string {
 		t.Fatalf("2fa confirm: %d %v", status, body)
 	}
 	return secret
+}
+
+func TestSocialStateIsBoundToTheBrowser(t *testing.T) {
+	// CSRF: a state issued for one browser is useless without that browser's
+	// HttpOnly nonce cookie — an attacker's start link cannot graft their
+	// provider session onto a victim.
+	env := newOAuthEnv(t)
+	fp := newFakeSocial("fake", "csrfer@fake.dev", true)
+	env.tc.SocialVal["fake"] = fp
+
+	loc := env.socialStart("fake", "login", "")
+	state := locationParam(loc, "state")
+
+	// No cookie at all -> invalid_state (the state is burned).
+	loc = env.socialCallbackRaw("fake", "good", state, "")
+	if got := locationParam(loc, "error"); got != "invalid_state" {
+		t.Fatalf("callback without the browser cookie must be invalid_state, got %s", loc)
+	}
+	// A cookie from a DIFFERENT flow -> invalid_state too (and the state is
+	// burned: consumption happens before the binding check).
+	loc = env.socialStart("fake", "login", "")
+	state = locationParam(loc, "state")
+	other := &http.Cookie{Name: "ah.social", Value: "00000000000000000000000000000000"}
+	saved := env.socialCookie
+	env.socialCookie = other
+	loc = env.socialCallback("fake", "good", state)
+	env.socialCookie = saved
+	if got := locationParam(loc, "error"); got != "invalid_state" {
+		t.Fatalf("callback with a foreign browser cookie must be invalid_state, got %s", loc)
+	}
+	// A fresh flow with the matching cookie completes the login.
+	loc = env.socialStart("fake", "login", "")
+	state = locationParam(loc, "state")
+	loc = env.socialCallback("fake", "good", state)
+	if locationParam(loc, "login_code") == "" {
+		t.Fatalf("matching cookie must complete the login: %s", loc)
+	}
 }
