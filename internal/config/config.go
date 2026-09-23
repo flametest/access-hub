@@ -49,6 +49,10 @@ type AuthConfig struct {
 	// (GET /oauth2/authorize) redirects anonymous users to
 	// {PortalURL}/login?next={original authorize URL} (M4 decision).
 	PortalURL string `yaml:"portalURL"`
+	// TOTPSecretKey (optional) enables application-layer encryption of TOTP
+	// secrets at rest (AES-256-GCM, "enc:v1:" prefixed values). Unset: secrets
+	// stay plaintext (legacy rows always decrypt transparently).
+	TOTPSecretKey string `yaml:"totpSecretKey"`
 	// DenylistFailOpen degrades the revoked-token denylist when Redis is
 	// unavailable: default false = fail-close (reject the request); true =
 	// serve tokens whose revocation cannot be checked (design §10: the

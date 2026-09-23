@@ -4,8 +4,11 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flametest/access-hub/internal/domain"
+	"github.com/flametest/access-hub/internal/infra/crypt"
+	"github.com/flametest/access-hub/internal/infra/jwt"
 	"github.com/flametest/access-hub/internal/infra/kv"
 	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/access-hub/internal/infra/password"
@@ -14,6 +17,7 @@ import (
 	"github.com/flametest/vita/verrors"
 	"github.com/flametest/vita/vgorm"
 	"github.com/google/uuid"
+	pquernaTotp "github.com/pquerna/otp/totp"
 )
 
 func newAuthEnv(t *testing.T) (*testutil.TestContainer, AuthService, TokenService) {
@@ -397,4 +401,58 @@ func TestLoginEnumerationIsUniform(t *testing.T) {
 	}
 	_, err = authSvc.Login(ctx, &dto.LoginReq{Identifier: user.Email, Password: "EnumyPassw0rd"}, "agent", "6.6.6.3")
 	assertInvalidCredentials("passwordless identity", err)
+}
+
+// TestTOTPSecretEncryptedAtRest pins the app-layer encryption: with
+// auth.totpSecretKey set, the stored enrollment secret is ciphertext
+// ("enc:v1:" prefixed) while enroll/confirm/login flows keep working
+// transparently over it.
+func TestTOTPSecretEncryptedAtRest(t *testing.T) {
+	tc, authSvc, _ := newAuthEnv(t)
+	ctx := context.Background()
+	tc.Cfg().Auth.TOTPSecretKey = "unit-totp-key"
+	user := seedIdentity(t, tc, "totpcrypt", "totpcrypt@test.dev", "TotpPassw0rd")
+
+	_, _, err := StartTwoFAEnroll(ctx, tc, user.Id, "totpcrypt@test.dev")
+	if err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	row, err := tc.TOTPSecretRepo().FindByUserID(ctx, user.Id)
+	if err != nil {
+		t.Fatalf("load enrollment: %v", err)
+	}
+	if !strings.HasPrefix(row.Secret, "enc:v1:") {
+		t.Fatalf("stored secret must be encrypted at rest: %q", row.Secret)
+	}
+
+	// Confirm works over the encrypted row: recover the plaintext code with
+	// the same key.
+	plain, err := crypt.Open(tc.Cfg().Auth.TOTPSecretKey, row.Secret)
+	if err != nil {
+		t.Fatalf("open stored secret: %v", err)
+	}
+	code, err := pquernaTotp.GenerateCode(plain, time.Now())
+	if err != nil {
+		t.Fatalf("derive code: %v", err)
+	}
+	if _, err := ConfirmTwoFAEnroll(ctx, tc, user.Id, code); err != nil {
+		t.Fatalf("confirm over encrypted secret: %v", err)
+	}
+
+	// A login challenge decrypts through the same path (mfa token + code).
+	mfaToken, err := tc.JWT().Issue(jwt.NewMFAClaims(user.Id, tc.Cfg().Auth.MFATokenTTL))
+	if err != nil {
+		t.Fatalf("issue mfa token: %v", err)
+	}
+	code2, err := pquernaTotp.GenerateCode(plain, time.Now().Add(31*time.Second))
+	if err != nil {
+		t.Fatalf("derive next code: %v", err)
+	}
+	resp, err := authSvc.Login2FA(ctx, &dto.Login2FAReq{MfaToken: mfaToken, Code: code2}, "agent", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("2fa login over encrypted secret: %v", err)
+	}
+	if resp.AccessToken == "" {
+		t.Fatal("2fa login must return tokens")
+	}
 }

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flametest/access-hub/internal/infra/crypt"
+
 	"github.com/flametest/access-hub/internal/container"
 	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/access-hub/internal/infra/password"
@@ -46,7 +48,11 @@ func backupHashes(row *model.TOTPSecret) []string {
 func consumeTwoFACode(ctx context.Context, c container.Container, row *model.TOTPSecret, code string) error {
 	code = strings.TrimSpace(code)
 	if isSixDigits(code) {
-		matched, ok := totp.Validate(row.Secret, code, time.Now())
+		secret, sErr := crypt.Open(c.Cfg().Auth.TOTPSecretKey, row.Secret)
+		if sErr != nil {
+			return sErr
+		}
+		matched, ok := totp.Validate(secret, code, time.Now())
 		if !ok || matched <= row.LastUsedStep {
 			return verrors.ForbiddenError("invalid verification code")
 		}
@@ -138,7 +144,13 @@ func StartTwoFAEnroll(ctx context.Context, c container.Container, userID, email 
 	if err != nil {
 		return "", "", verrors.InternalServerError(err.Error())
 	}
-	if _, err := c.TOTPSecretRepo().UpsertDraft(ctx, userID, secret); err != nil {
+	// Encrypted at rest when auth.totpSecretKey is configured (legacy
+	// plaintext rows keep validating transparently).
+	stored, err := crypt.Seal(c.Cfg().Auth.TOTPSecretKey, secret)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := c.TOTPSecretRepo().UpsertDraft(ctx, userID, stored); err != nil {
 		return "", "", verrors.Wrap(err, "store totp draft")
 	}
 	return secret, uri, nil
@@ -161,7 +173,11 @@ func ConfirmTwoFAEnroll(ctx context.Context, c container.Container, userID, code
 	if !isSixDigits(strings.TrimSpace(code)) {
 		return nil, verrors.ForbiddenError("invalid verification code")
 	}
-	if _, ok := totp.Validate(row.Secret, code, time.Now()); !ok {
+	secret, err := crypt.Open(c.Cfg().Auth.TOTPSecretKey, row.Secret)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := totp.Validate(secret, code, time.Now()); !ok {
 		return nil, verrors.ForbiddenError("invalid verification code")
 	}
 	codes, err := totp.GenerateBackupCodes()
