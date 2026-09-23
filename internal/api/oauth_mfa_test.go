@@ -1356,3 +1356,34 @@ func TestAuthzCheckCacheKeysDoNotCollide(t *testing.T) {
 		t.Fatal("order@read:* must be denied on its own merits (legacy key would alias it to the cached allow)")
 	}
 }
+
+// TestWorkspaceTokenRefusesDisabledApp pins the app-status gate: exchanging
+// a workspace token for an account of a DISABLED app must fail the same way
+// direct account login does.
+func TestWorkspaceTokenRefusesDisabledApp(t *testing.T) {
+	env := newOAuthEnv(t)
+	roleID := env.createAppWithRole("crmw")
+	alice := env.registerIdentity("alicew", "alicew@test.dev", "AlicePassw0rd")
+	status, body := env.doJSON("POST", "/api/v1/admin/apps/crmw/accounts", env.rootToken, map[string]any{
+		"email": "alicew@test.dev", "role_ids": []string{roleID}, "password": "AliceCrmPass1",
+	})
+	if status != 201 {
+		t.Fatalf("provision account: %d %v", status, body)
+	}
+	accountID := env.str(body, "account_id")
+
+	// Sanity: the workspace token works while the app is active.
+	status, body = env.doJSON("POST", "/api/v1/me/workspaces/"+accountID+"/token", alice, nil)
+	if status != 200 {
+		t.Fatalf("workspace token: %d %v", status, body)
+	}
+	// Disable the app.
+	status, _ = env.doJSON("PATCH", "/api/v1/admin/apps/crmw", env.rootToken, map[string]any{"status": "disabled"})
+	if status != 200 {
+		t.Fatalf("disable app: %d", status)
+	}
+	status, body = env.doJSON("POST", "/api/v1/me/workspaces/"+accountID+"/token", alice, nil)
+	if status != 403 {
+		t.Fatalf("workspace token for a disabled app must 403, got %d %v", status, body)
+	}
+}

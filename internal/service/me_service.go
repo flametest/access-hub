@@ -175,6 +175,11 @@ func (s *meServiceImpl) WorkspaceToken(ctx context.Context, userID, accountID, d
 	if err != nil {
 		return nil, verrors.Wrap(err, "find app")
 	}
+	// Same gate as direct account login: a disabled app must not mint
+	// workspace tokens.
+	if app.Status != domain.AppStatusActive {
+		return nil, verrors.ForbiddenError("app is disabled")
+	}
 	identity, err := s.c.UserRepo().FindByID(ctx, userID)
 	if err != nil {
 		return nil, verrors.Wrap(err, "find identity")
