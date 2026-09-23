@@ -47,17 +47,20 @@ type Provider interface {
 	// Enabled reports whether the provider has usable credentials configured.
 	Enabled() bool
 	// AuthCodeURL builds the provider authorization URL for the given
-	// redirect URI (the registered callback) and state.
-	AuthCodeURL(redirectURI, state string) string
+	// redirect URI (the registered callback), state and OIDC nonce ("" =
+	// none; Apple echoes it in the id_token so the exchange can detect
+	// replays).
+	AuthCodeURL(redirectURI, state, nonce string) string
 	// Exchange converts an authorization code into the provider profile.
 	Exchange(ctx context.Context, code, redirectURI string) (*Profile, error)
 }
 
 // FormExchanger is implemented by providers whose callback posts extra form
 // fields (Apple form_post: code + id_token + user). form carries the raw
-// POSTed values; redirectURI is the registered callback URL.
+// POSTed values; redirectURI is the registered callback URL; nonce is the
+// OIDC nonce from the start request (verified against the id_token).
 type FormExchanger interface {
-	ExchangeForm(ctx context.Context, form Form, redirectURI string) (*Profile, error)
+	ExchangeForm(ctx context.Context, form Form, redirectURI, nonce string) (*Profile, error)
 }
 
 // Form is the callback form payload (POSTed by form_post providers).
@@ -241,7 +244,9 @@ func (p *oauthProvider) config(redirectURI string) *oauth2.Config {
 	}
 }
 
-func (p *oauthProvider) AuthCodeURL(redirectURI, state string) string {
+func (p *oauthProvider) AuthCodeURL(redirectURI, state, _ string) string {
+	// The plain providers carry no verifiable id_token in this flow, so the
+	// nonce has no replay value here and stays off the URL.
 	return p.config(redirectURI).AuthCodeURL(state)
 }
 

@@ -82,29 +82,33 @@ func (p *appleProvider) Enabled() bool {
 }
 
 // AuthCodeURL builds the Apple authorization URL. Apple requires
-// form_post + "code id_token" + scope "name email" (no PKCE).
-func (p *appleProvider) AuthCodeURL(redirectURI, state string) string {
+// form_post + "code id_token" + scope "name email" (no PKCE). The nonce is
+// echoed (with c_hash) inside the id_token, binding it to this one flow.
+func (p *appleProvider) AuthCodeURL(redirectURI, state, nonce string) string {
 	v := url.Values{}
 	v.Set("client_id", p.cfg.ServicesID)
 	v.Set("redirect_uri", redirectURI)
 	v.Set("state", state)
+	if nonce != "" {
+		v.Set("nonce", nonce)
+	}
 	return p.authURL + "?response_mode=form_post&response_type=code%20id_token&scope=name%20email&" + v.Encode()
 }
 
 // Exchange swaps the authorization code for an id_token via the Apple token
 // endpoint (client_secret = freshly minted ES256 JWT) and verifies it.
 func (p *appleProvider) Exchange(ctx context.Context, code, redirectURI string) (*Profile, error) {
-	return p.exchangeIDToken(ctx, code, redirectURI, nil)
+	return p.exchangeIDToken(ctx, code, redirectURI, nil, "")
 }
 
 // ExchangeForm handles the form_post callback: the id_token may be POSTed
 // directly (response_type includes id_token) or only the code arrives. The
 // `user` form field (first authorization only) carries the display name.
-func (p *appleProvider) ExchangeForm(ctx context.Context, form Form, redirectURI string) (*Profile, error) {
-	return p.exchangeIDToken(ctx, form.Get("code"), redirectURI, form)
+func (p *appleProvider) ExchangeForm(ctx context.Context, form Form, redirectURI, nonce string) (*Profile, error) {
+	return p.exchangeIDToken(ctx, form.Get("code"), redirectURI, form, nonce)
 }
 
-func (p *appleProvider) exchangeIDToken(ctx context.Context, code, redirectURI string, form Form) (*Profile, error) {
+func (p *appleProvider) exchangeIDToken(ctx context.Context, code, redirectURI string, form Form, nonce string) (*Profile, error) {
 	rawIDToken := ""
 	if form != nil {
 		rawIDToken = strings.TrimSpace(form.Get("id_token"))
@@ -119,7 +123,7 @@ func (p *appleProvider) exchangeIDToken(ctx context.Context, code, redirectURI s
 		}
 		rawIDToken = token
 	}
-	claims, err := p.verifyIDToken(rawIDToken)
+	claims, err := p.verifyIDToken(rawIDToken, nonce)
 	if err != nil {
 		return nil, err
 	}
@@ -203,13 +207,17 @@ func (p *appleProvider) mintClientSecret(now time.Time) (string, error) {
 // appleIDTokenClaims are the verified id_token claims.
 type appleIDTokenClaims struct {
 	jwt.RegisteredClaims
+	Nonce         string          `json:"nonce"`
 	Email         string          `json:"email"`
 	EmailVerified json.RawMessage `json:"email_verified"` // bool or string in the wild
 }
 
 // verifyIDToken validates an Apple id_token: RS256 only, kid resolved
-// against the (cached) JWKS, iss/aud/exp enforced.
-func (p *appleProvider) verifyIDToken(raw string) (*appleIDTokenClaims, error) {
+// against the (cached) JWKS, iss/aud/exp enforced. A non-empty expectNonce
+// must match the token's nonce claim — the anti-replay binding to the
+// authorization flow it was issued for (a captured id_token cannot be
+// replayed through a different flow's callback).
+func (p *appleProvider) verifyIDToken(raw, expectNonce string) (*appleIDTokenClaims, error) {
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
 		jwt.WithIssuer(appleIssuer),
@@ -222,6 +230,9 @@ func (p *appleProvider) verifyIDToken(raw string) (*appleIDTokenClaims, error) {
 		return p.jwks.publicKey(kid)
 	}); err != nil {
 		return nil, fmt.Errorf("verify apple id_token: %w", err)
+	}
+	if expectNonce != "" && claims.Nonce != expectNonce {
+		return nil, fmt.Errorf("apple id_token nonce mismatch (replayed token?)")
 	}
 	if claims.Subject == "" {
 		return nil, fmt.Errorf("apple id_token has no sub claim")

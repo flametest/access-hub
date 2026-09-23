@@ -153,6 +153,13 @@ func (s *socialServiceImpl) Start(ctx context.Context, providerID, redirect, mod
 		return "", "", verrors.InternalServerError(fmt.Sprintf("generate browser nonce: %v", err))
 	}
 	state.Browser = browserNonce
+	// OIDC nonce for providers that echo it in a verifiable id_token
+	// (Apple): binds the token to THIS flow, blocking id_token replay.
+	oidcNonce, err := randomHex(16)
+	if err != nil {
+		return "", "", verrors.InternalServerError(fmt.Sprintf("generate oidc nonce: %v", err))
+	}
+	state.Nonce = oidcNonce
 	raw, err := json.Marshal(state)
 	if err != nil {
 		return "", "", verrors.InternalServerError(fmt.Sprintf("marshal social state: %v", err))
@@ -164,7 +171,7 @@ func (s *socialServiceImpl) Start(ctx context.Context, providerID, redirect, mod
 	if err := s.c.KV().Set(ctx, kvSocialStatePrefix+stateToken, string(raw), socialStateTTL); err != nil {
 		return "", "", verrors.Wrap(err, "store social state")
 	}
-	url := p.AuthCodeURL(s.callbackURL(providerID), stateToken)
+	url := p.AuthCodeURL(s.callbackURL(providerID), stateToken, oidcNonce)
 	return url, browserNonce, nil
 }
 
@@ -191,7 +198,7 @@ func (s *socialServiceImpl) Callback(ctx context.Context, providerID, code, stat
 		return s.failResult(statePayload, form, socialErrInvalidState), nil
 	}
 
-	profile, err := s.exchangeProfile(ctx, p, providerID, code, form)
+	profile, err := s.exchangeProfile(ctx, p, providerID, code, form, statePayload.Nonce)
 	if err != nil {
 		log.Warn().Any("error", err).Any("provider", providerID).Msg("social profile exchange failed")
 		return s.failResult(statePayload, form, socialErrProviderError), nil
@@ -250,10 +257,12 @@ func (s *socialServiceImpl) consumeState(ctx context.Context, providerID, state 
 }
 
 // exchangeProfile resolves the provider profile from the callback payload.
-func (s *socialServiceImpl) exchangeProfile(ctx context.Context, p social.Provider, providerID, code string, form social.Form) (*social.Profile, error) {
+// nonce carries the start-time OIDC nonce for providers that verify it
+// (Apple).
+func (s *socialServiceImpl) exchangeProfile(ctx context.Context, p social.Provider, providerID, code string, form social.Form, nonce string) (*social.Profile, error) {
 	redirectURI := s.callbackURL(providerID)
 	if fx, ok := p.(social.FormExchanger); ok && form != nil {
-		return fx.ExchangeForm(ctx, form, redirectURI)
+		return fx.ExchangeForm(ctx, form, redirectURI, nonce)
 	}
 	return p.Exchange(ctx, code, redirectURI)
 }

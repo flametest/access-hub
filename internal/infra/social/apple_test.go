@@ -138,12 +138,12 @@ func TestAppleClientSecret(t *testing.T) {
 
 func TestAppleAuthCodeURL(t *testing.T) {
 	p, _ := newTestAppleProvider(t)
-	raw := p.AuthCodeURL("https://hub.example.com/api/v1/auth/social/apple/callback", "st-9")
+	raw := p.AuthCodeURL("https://hub.example.com/api/v1/auth/social/apple/callback", "st-9", "nonce-abc")
 	for _, want := range []string{
 		"response_mode=form_post", "response_type=code%20id_token", "scope=name%20email",
 		"client_id=com.example.portal",
 		"redirect_uri=https%3A%2F%2Fhub.example.com%2Fapi%2Fv1%2Fauth%2Fsocial%2Fapple%2Fcallback",
-		"state=st-9",
+		"state=st-9", "nonce=nonce-abc",
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("apple auth url %q missing %q", raw, want)
@@ -161,7 +161,7 @@ func TestAppleVerifyIDToken(t *testing.T) {
 
 	raw := mintAppleIDToken(t, rsaKey, "apple-kid-1",
 		mintAppleClaims("apple-user-1", "ada@example.com", true))
-	claims, err := p.verifyIDToken(raw)
+	claims, err := p.verifyIDToken(raw, "")
 	if err != nil {
 		t.Fatalf("verify id_token: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestAppleVerifyIDToken(t *testing.T) {
 	// Apple serializes email_verified as a string in the wild.
 	raw = mintAppleIDToken(t, rsaKey, "apple-kid-1",
 		mintAppleClaims("apple-user-1", "ada@example.com", "true"))
-	claims, err = p.verifyIDToken(raw)
+	claims, err = p.verifyIDToken(raw, "")
 	if err != nil || !flexibleBool(claims.EmailVerified) {
 		t.Fatalf("string email_verified must decode: %v / %+v", err, claims)
 	}
@@ -228,7 +228,7 @@ func TestAppleVerifyIDTokenFailures(t *testing.T) {
 				kid = "other-kid"
 			}
 			raw := mintAppleIDToken(t, rsaKey, kid, tc.claims)
-			if _, err := p.verifyIDToken(raw); err == nil {
+			if _, err := p.verifyIDToken(raw, ""); err == nil {
 				t.Fatalf("%s must fail the verification", tc.name)
 			}
 		})
@@ -248,7 +248,7 @@ func TestAppleExchangeForm(t *testing.T) {
 	profile, err := p.ExchangeForm(context.Background(), Form{
 		"id_token": raw,
 		"user":     `{"name":{"firstName":"Grace","lastName":"Hopper"}}`,
-	}, "https://app.test/cb")
+	}, "https://app.test/cb", "")
 	if err != nil {
 		t.Fatalf("exchange form: %v", err)
 	}
@@ -287,5 +287,34 @@ func TestFlexibleBool(t *testing.T) {
 		if got := flexibleBool(json.RawMessage(raw)); got != want {
 			t.Fatalf("flexibleBool(%s) = %v, want %v", raw, got, want)
 		}
+	}
+}
+
+// TestAppleNonceReplayRejected pins the anti-replay binding: an id_token is
+// only accepted when its nonce claim matches the flow's expected nonce; a
+// token from a DIFFERENT flow (a replay) is refused.
+func TestAppleNonceReplayRejected(t *testing.T) {
+	p, _ := newTestAppleProvider(t)
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	p.jwks = newJWKSCache(newFakeAppleJWKS(t, rsaKey, "apple-kid-1").URL)
+
+	claims := mintAppleClaims("apple-user-9", "nonce@example.com", "true")
+	claims["nonce"] = "nonce-flow-A"
+	raw := mintAppleIDToken(t, rsaKey, "apple-kid-1", claims)
+
+	// The matching flow accepts the token.
+	profile, err := p.ExchangeForm(context.Background(), Form{"id_token": raw}, "https://app.test/cb", "nonce-flow-A")
+	if err != nil {
+		t.Fatalf("matching nonce must accept: %v", err)
+	}
+	if profile.ProviderUserID != "apple-user-9" {
+		t.Fatalf("profile = %+v", profile)
+	}
+	// A different flow (the replay target) refuses it.
+	if _, err := p.ExchangeForm(context.Background(), Form{"id_token": raw}, "https://app.test/cb", "nonce-flow-B"); err == nil {
+		t.Fatal("a nonce mismatch (replayed token) must be rejected")
 	}
 }

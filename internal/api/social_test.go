@@ -26,7 +26,7 @@ type fakeSocialProvider struct {
 
 func (f *fakeSocialProvider) ID() string    { return f.id }
 func (f *fakeSocialProvider) Enabled() bool { return f.enabled }
-func (f *fakeSocialProvider) AuthCodeURL(_ string, state string) string {
+func (f *fakeSocialProvider) AuthCodeURL(_, state string, _ string) string {
 	f.lastState = state
 	return "https://fake.provider/auth?state=" + state
 }

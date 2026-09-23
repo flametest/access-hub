@@ -107,7 +107,7 @@ func exchangeFor(t *testing.T, reg map[string]Provider, providerID string) *Prof
 // id, redirect URI, state and a non-empty scope.
 func assertAuthCodeURL(t *testing.T, p Provider, providerID string) {
 	t.Helper()
-	raw := p.AuthCodeURL(testRedirectURI, "st-123")
+	raw := p.AuthCodeURL(testRedirectURI, "st-123", "")
 	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("parse %s auth url: %v", providerID, err)
@@ -319,7 +319,7 @@ func TestDisabledProviders(t *testing.T) {
 	if got := reg[domain.SocialProviderApple].ID(); got != domain.SocialProviderApple {
 		t.Fatalf("apple provider id = %q", got)
 	}
-	if !strings.Contains(reg[domain.SocialProviderApple].AuthCodeURL("https://app.test/cb", "st"), "response_mode=form_post") {
+	if !strings.Contains(reg[domain.SocialProviderApple].AuthCodeURL("https://app.test/cb", "st", ""), "response_mode=form_post") {
 		t.Fatal("apple auth url must use response_mode=form_post")
 	}
 }
