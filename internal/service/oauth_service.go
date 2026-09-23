@@ -409,7 +409,10 @@ func (s *oauthServiceImpl) engineToken(ctx context.Context, r *http.Request, gt 
 // refreshToken rotates the refresh token in place (same row: new hash,
 // rotation_count++) and issues a fresh account-subject access token. A
 // presented hash that is no longer current but is known (rotated away)
-// triggers the family revocation.
+// triggers the family revocation. Rotation happens in place on one row, so
+// the token family IS the row: reuse revokes that row only — never every
+// token of the client (any user could otherwise kick all other users of the
+// client offline by replaying their own old token).
 func (s *oauthServiceImpl) refreshToken(ctx context.Context, r *http.Request) (map[string]any, error) {
 	presented := r.PostFormValue("refresh_token")
 	if presented == "" {
@@ -424,11 +427,11 @@ func (s *oauthServiceImpl) refreshToken(ctx context.Context, r *http.Request) (m
 		}
 		// Not the current hash: a hit in the retired-hash index means the
 		// token was already rotated away — treat as a leak and revoke the
-		// whole family (the index stores the owning client id).
-		if clientID, kvErr := s.c.KV().Get(ctx, oauth2x.RetiredHashPrefix+presentedHash); kvErr == nil && clientID != "" {
-			_ = s.c.OAuthRefreshTokenRepo().RevokeAllForClient(ctx, clientID, now)
+		// family (the index stores the owning token row id).
+		if rowID, kvErr := s.c.KV().Get(ctx, oauth2x.RetiredHashPrefix+presentedHash); kvErr == nil && rowID != "" {
+			_ = s.c.OAuthRefreshTokenRepo().Revoke(ctx, rowID, now)
 			writeAudit(ctx, s.c, ActorSystem, "", nil, AuditTokenReuse, "oauth_refresh_token", presentedHash,
-				map[string]any{"reason": "oauth refresh token reuse detected", "client_id": clientID}, "", "")
+				map[string]any{"reason": "oauth refresh token reuse detected", "token_row": rowID}, "", "")
 		}
 		return nil, oauthErr(400, "invalid_grant", "invalid refresh token")
 	}
@@ -475,14 +478,16 @@ func (s *oauthServiceImpl) refreshToken(ctx context.Context, r *http.Request) (m
 		return nil, verrors.Wrap(err, "rotate refresh token")
 	}
 	if !rotated {
-		_ = s.c.OAuthRefreshTokenRepo().RevokeAllForClient(ctx, row.ClientID, now)
+		// CAS miss: the presented hash lost a race with a concurrent
+		// rotation/revocation of the same row — revoke that row (the family).
+		_ = s.c.OAuthRefreshTokenRepo().Revoke(ctx, row.Id, now)
 		writeAudit(ctx, s.c, ActorSystem, "", nil, AuditTokenReuse, "oauth_refresh_token", presentedHash,
-			map[string]any{"reason": "concurrent oauth refresh token rotation detected", "client_id": row.ClientID}, "", "")
+			map[string]any{"reason": "concurrent oauth refresh token rotation detected", "token_row": row.Id}, "", "")
 		return nil, oauthErr(400, "invalid_grant", "refresh token reuse detected, token family revoked")
 	}
-	// Retire the presented hash for the reuse window (best-effort: the CAS
-	// above is the primary guard).
-	if kvErr := s.c.KV().Set(ctx, oauth2x.RetiredHashPrefix+presentedHash, row.ClientID, s.c.Cfg().Auth.RefreshTokenTTL); kvErr != nil {
+	// Retire the presented hash for the reuse window, keyed by the owning
+	// token row (best-effort: the CAS above is the primary guard).
+	if kvErr := s.c.KV().Set(ctx, oauth2x.RetiredHashPrefix+presentedHash, row.Id, s.c.Cfg().Auth.RefreshTokenTTL); kvErr != nil {
 		log.Warn().Any("error", kvErr).Msg("record retired oauth refresh token failed (replay detection degraded)")
 	}
 

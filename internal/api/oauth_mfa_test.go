@@ -867,6 +867,86 @@ func TestOAuthRefreshClientAuthAndSubjectStatus(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 2c. refresh reuse revokes only the replayed token's family (the row), not
+// every refresh token of the client (a client-wide logout DoS before the
+// fix: any user could replay their own old token and kick everyone off).
+// ---------------------------------------------------------------------------
+
+func TestOAuthRefreshReuseRevokesOnlyTheTokenFamily(t *testing.T) {
+	env := newOAuthEnv(t)
+	roleID := env.createAppWithRole("crmr")
+	alice := env.registerIdentity("alicefam", "alicefam@test.dev", "AlicePassw0rd")
+	bob := env.registerIdentity("bobfam", "bobfam@test.dev", "BobPassw0rd1")
+	for _, u := range []struct{ email string }{{"alicefam@test.dev"}, {"bobfam@test.dev"}} {
+		status, body := env.doJSON("POST", "/api/v1/admin/apps/crmr/accounts", env.rootToken, map[string]any{
+			"email": u.email, "role_ids": []string{roleID}, "password": "CrmPassw0rd1",
+		})
+		if status != 201 {
+			t.Fatalf("provision account %s: %d %v", u.email, status, body)
+		}
+	}
+	clientID, clientSecret := env.createOAuthClient("crmr", "RP Fam", "confidential",
+		[]string{"authorization_code", "refresh_token"})
+
+	issueRefresh := func(who string, center string) string {
+		t.Helper()
+		verifier, challenge := pkcePair(t)
+		status, body := env.doJSON("POST", "/api/v1/oauth/authorize", center, map[string]any{
+			"client_id": clientID, "redirect_uri": "https://rp.example.com/cb",
+			"scope": "offline_access", "code_challenge": challenge, "code_challenge_method": "S256",
+		})
+		if status != 200 {
+			t.Fatalf("%s authorize: %d %v", who, status, body)
+		}
+		code := env.str(body, "redirect_to")
+		if idx := strings.Index(code, "code="); idx >= 0 {
+			code = code[idx+5:]
+			if amp := strings.Index(code, "&"); amp >= 0 {
+				code = code[:amp]
+			}
+		}
+		status, body = env.doForm("/oauth2/token", url.Values{
+			"grant_type": {"authorization_code"}, "code": {code},
+			"redirect_uri": {"https://rp.example.com/cb"}, "code_verifier": {verifier},
+		}, clientID, clientSecret, "")
+		if status != 200 {
+			t.Fatalf("%s token exchange: %d %v", who, status, body)
+		}
+		return env.str(body, "refresh_token")
+	}
+	doRefresh := func(token string) (int, map[string]any) {
+		t.Helper()
+		return env.doForm("/oauth2/token", url.Values{
+			"grant_type": {"refresh_token"}, "refresh_token": {token},
+		}, clientID, clientSecret, "")
+	}
+
+	aliceV1 := issueRefresh("alice", alice)
+	// Rotate once: aliceV1 is now a retired hash.
+	status, body := doRefresh(aliceV1)
+	if status != 200 {
+		t.Fatalf("alice refresh: %d %v", status, body)
+	}
+	aliceV2 := env.str(body, "refresh_token")
+	bobV1 := issueRefresh("bob", bob)
+
+	// Alice replays the retired token: her family (including aliceV2) dies…
+	status, _ = doRefresh(aliceV1)
+	if status != 400 {
+		t.Fatalf("alice replay must 400, got %d", status)
+	}
+	status, _ = doRefresh(aliceV2)
+	if status != 400 {
+		t.Fatalf("alice family must be revoked, got %d", status)
+	}
+	// …but bob's token from the same client keeps working.
+	status, body = doRefresh(bobV1)
+	if status != 200 {
+		t.Fatalf("bob's token must survive alice's replay: %d %v", status, body)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 3. client_credentials: service token works on userinfo and passes
 // authz/check against its OWN app via the Casbin loader wildcard rule.
 // ---------------------------------------------------------------------------
