@@ -102,7 +102,12 @@ type GoogleConfig struct {
 type MicrosoftConfig struct {
 	ClientID     string `yaml:"clientId"`
 	ClientSecret string `yaml:"clientSecret"`
-	Tenant       string `yaml:"tenant"` // "common" by default
+	// Tenant pins the authorize/token endpoints: "common" (default) accepts
+	// any Entra tenant; pinning to your org tenant restricts who can
+	// authenticate (recommended for B2B). Either way the email auto-merge
+	// only trusts explicit verification claims (email_verified / xms_edov),
+	// never a bare mail attribute or UPN (nOAuth hardening).
+	Tenant string `yaml:"tenant"`
 }
 
 type FacebookConfig struct {

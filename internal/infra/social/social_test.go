@@ -2,6 +2,7 @@ package social
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,8 +19,9 @@ import (
 
 // newFakeOAuthServer spins up an httptest fake of a plain OAuth2 provider:
 // POST /token answers a bearer token (asserting the authorization-code
-// request shape), GET /userinfo answers the given JSON fixture.
-func newFakeOAuthServer(t *testing.T, userinfo any) *httptest.Server {
+// request shape; idToken, when given, rides along as the id_token field),
+// GET /userinfo answers the given JSON fixture.
+func newFakeOAuthServer(t *testing.T, userinfo any, idToken ...string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -36,12 +38,16 @@ func newFakeOAuthServer(t *testing.T, userinfo any) *httptest.Server {
 			if got := r.Form.Get("redirect_uri"); got != "https://app.test/cb" {
 				t.Errorf("redirect_uri = %q, want https://app.test/cb", got)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			tokenResponse := map[string]any{
 				"access_token": "fake-access-token",
 				"token_type":   "Bearer",
 				"expires_in":   3600,
-			})
+			}
+			if len(idToken) > 0 && idToken[0] != "" {
+				tokenResponse["id_token"] = idToken[0]
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(tokenResponse)
 		case "/userinfo":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(userinfo)
@@ -51,6 +57,19 @@ func newFakeOAuthServer(t *testing.T, userinfo any) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// fakeIDToken mints an unsigned JWT: the code flow reads the id_token claims
+// straight from the token endpoint's TLS response (no signature check by
+// design, see decodeIDTokenClaims).
+func fakeIDToken(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal id_token claims: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`)) +
+		"." + base64.RawURLEncoding.EncodeToString(payload) + ".fakesig"
 }
 
 // newTestRegistry builds a registry whose google/microsoft/facebook providers
@@ -113,7 +132,7 @@ func TestGoogleExchange(t *testing.T) {
 
 	profile := exchangeFor(t, reg, domain.SocialProviderGoogle)
 	if profile.ProviderUserID != "g-123" || profile.Email != "User@Example.com" ||
-		!profile.EmailVerified || profile.DisplayName != "Google User" ||
+		!profile.EmailVerified || !profile.EmailMergeAllowed || profile.DisplayName != "Google User" ||
 		profile.AvatarURL != "https://photos.example.com/g.png" {
 		t.Fatalf("google profile = %+v", profile)
 	}
@@ -128,31 +147,102 @@ func TestGoogleUnverifiedEmail(t *testing.T) {
 	})
 	reg := newTestRegistry(srv)
 	profile := exchangeFor(t, reg, domain.SocialProviderGoogle)
-	if profile.EmailVerified {
+	if profile.EmailVerified || profile.EmailMergeAllowed {
 		t.Fatalf("email_verified=false must not flip: %+v", profile)
 	}
 }
 
 func TestMicrosoftExchange(t *testing.T) {
-	// Preferred-username (UPN) fallback + tenant-implied verification.
+	// The preferred-username (UPN) fallback fills the display address but is
+	// admin-settable: it never counts as verified or merge-trusted.
 	srv := newFakeOAuthServer(t, map[string]any{
 		"sub": "ms-1", "email": "", "preferred_username": "user@tenant.example.com",
 		"name": "MS User",
 	})
 	reg := newTestRegistry(srv)
 	profile := exchangeFor(t, reg, domain.SocialProviderMicrosoft)
-	if profile.ProviderUserID != "ms-1" || profile.Email != "user@tenant.example.com" || !profile.EmailVerified {
-		t.Fatalf("microsoft profile = %+v", profile)
+	if profile.ProviderUserID != "ms-1" || profile.Email != "user@tenant.example.com" ||
+		profile.EmailVerified || profile.EmailMergeAllowed {
+		t.Fatalf("microsoft profile (UPN fallback) = %+v", profile)
 	}
 
-	// An explicit email_verified=false wins over the tenant-implied one.
+	// An explicit email_verified=false keeps the address unverified.
 	srv2 := newFakeOAuthServer(t, map[string]any{
 		"sub": "ms-2", "email": "ms@example.com", "email_verified": false,
 	})
 	reg2 := newTestRegistry(srv2)
 	profile = exchangeFor(t, reg2, domain.SocialProviderMicrosoft)
-	if profile.Email != "ms@example.com" || profile.EmailVerified {
+	if profile.Email != "ms@example.com" || profile.EmailVerified || profile.EmailMergeAllowed {
 		t.Fatalf("microsoft profile (explicit unverified) = %+v", profile)
+	}
+
+	// A bare email without any verification claim is NOT verified (the
+	// pre-fix behavior treated presence as verification — nOAuth).
+	srv3 := newFakeOAuthServer(t, map[string]any{
+		"sub": "ms-3", "email": "victim@company.com",
+	})
+	reg3 := newTestRegistry(srv3)
+	profile = exchangeFor(t, reg3, domain.SocialProviderMicrosoft)
+	if profile.Email != "victim@company.com" || profile.EmailVerified || profile.EmailMergeAllowed {
+		t.Fatalf("microsoft profile (presence only) = %+v", profile)
+	}
+
+	// An explicit email_verified=true on the email claim verifies and allows
+	// the merge (standard OIDC contract).
+	srv4 := newFakeOAuthServer(t, map[string]any{
+		"sub": "ms-4", "email": "ms4@example.com", "email_verified": true,
+	})
+	reg4 := newTestRegistry(srv4)
+	profile = exchangeFor(t, reg4, domain.SocialProviderMicrosoft)
+	if profile.Email != "ms4@example.com" || !profile.EmailVerified || !profile.EmailMergeAllowed {
+		t.Fatalf("microsoft profile (explicit verified) = %+v", profile)
+	}
+}
+
+func TestMicrosoftXmsEdov(t *testing.T) {
+	// xms_edov=true bound to the same address the profile carries: verified
+	// and merge-trusted even though email_verified is absent (the common
+	// Entra work-account shape).
+	srv := newFakeOAuthServer(t, map[string]any{
+		"sub": "ms-edov-1", "email": "work@contoso.com",
+	}, fakeIDToken(t, map[string]any{"email": "work@contoso.com", "xms_edov": true}))
+	reg := newTestRegistry(srv)
+	profile := exchangeFor(t, reg, domain.SocialProviderMicrosoft)
+	if profile.Email != "work@contoso.com" || !profile.EmailVerified || !profile.EmailMergeAllowed {
+		t.Fatalf("microsoft profile (xms_edov match) = %+v", profile)
+	}
+
+	// xms_edov vouching a DIFFERENT address than the userinfo mail attribute
+	// (the takeover pattern: a hostile tenant admin points mail at the
+	// victim's address) must not verify.
+	srv2 := newFakeOAuthServer(t, map[string]any{
+		"sub": "ms-edov-2", "email": "victim@company.com",
+	}, fakeIDToken(t, map[string]any{"email": "attacker@evil.example", "xms_edov": true}))
+	reg2 := newTestRegistry(srv2)
+	profile = exchangeFor(t, reg2, domain.SocialProviderMicrosoft)
+	if profile.Email != "victim@company.com" || profile.EmailVerified || profile.EmailMergeAllowed {
+		t.Fatalf("microsoft profile (xms_edov mismatch) = %+v", profile)
+	}
+
+	// The UPN fallback only becomes verified when the token itself carries
+	// and vouches the exact UPN address.
+	srv3 := newFakeOAuthServer(t, map[string]any{
+		"sub": "ms-edov-3", "email": "", "preferred_username": "upn@contoso.com",
+	}, fakeIDToken(t, map[string]any{"email": "upn@contoso.com", "xms_edov": true}))
+	reg3 := newTestRegistry(srv3)
+	profile = exchangeFor(t, reg3, domain.SocialProviderMicrosoft)
+	if profile.Email != "upn@contoso.com" || !profile.EmailVerified || !profile.EmailMergeAllowed {
+		t.Fatalf("microsoft profile (xms_edov on UPN) = %+v", profile)
+	}
+
+	// xms_edov without an email claim binds nothing: the UPN stays unverified.
+	srv4 := newFakeOAuthServer(t, map[string]any{
+		"sub": "ms-edov-4", "email": "", "preferred_username": "upn@contoso.com",
+	}, fakeIDToken(t, map[string]any{"xms_edov": true}))
+	reg4 := newTestRegistry(srv4)
+	profile = exchangeFor(t, reg4, domain.SocialProviderMicrosoft)
+	if profile.Email != "upn@contoso.com" || profile.EmailVerified || profile.EmailMergeAllowed {
+		t.Fatalf("microsoft profile (xms_edov unbound) = %+v", profile)
 	}
 }
 
@@ -168,6 +258,12 @@ func TestFacebookExchange(t *testing.T) {
 	if profile.ProviderUserID != "fb-1" || profile.Email != "fb@example.com" ||
 		!profile.EmailVerified || profile.DisplayName != "FB User" {
 		t.Fatalf("facebook profile = %+v", profile)
+	}
+	// Presence-only verification: the address may auto-register a fresh
+	// account but never auto-merges into an existing one (tightened with the
+	// Microsoft nOAuth fix; Facebook sends no verification claim on the wire).
+	if profile.EmailMergeAllowed {
+		t.Fatalf("facebook email must not be merge-trusted: %+v", profile)
 	}
 	if profile.AvatarURL != "https://graph.facebook.com/fb-1/picture.jpg" {
 		t.Fatalf("facebook picture.data.url not resolved: %+v", profile)

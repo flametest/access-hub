@@ -7,6 +7,7 @@ package social
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,8 +25,18 @@ type Profile struct {
 	ProviderUserID string
 	Email          string
 	EmailVerified  bool
-	DisplayName    string
-	AvatarURL      string
+	// EmailMergeAllowed gates the verified-email auto-merge in
+	// resolveSocialUser (binding this profile to an EXISTING access-hub
+	// account). It is deliberately stricter than EmailVerified: auto-register
+	// only creates a fresh account under the claimed address, while a merge
+	// hands over an existing one, so it requires the provider to vouch the
+	// exact address on the wire (an explicit verification claim, or
+	// Microsoft's xms_edov domain-ownership signal). Presence-only trust
+	// (Facebook) and admin-settable claims (Microsoft mail/UPN) never
+	// qualify. Invariant: EmailMergeAllowed implies EmailVerified.
+	EmailMergeAllowed bool
+	DisplayName       string
+	AvatarURL         string
 	// Raw is the untouched provider payload (kept for identities.raw_profile).
 	Raw map[string]any
 }
@@ -199,7 +210,9 @@ type oauthSpec struct {
 	authURL, tokenURL          string
 	userinfoURL                string
 	scopes                     []string
-	parse                      func(raw []byte) (*Profile, error)
+	// parse receives the userinfo payload plus the token endpoint response
+	// (providers may consult its id_token claims, e.g. Microsoft xms_edov).
+	parse func(raw []byte, tok *oauth2.Token) (*Profile, error)
 }
 
 // oauthProvider implements Provider for the three plain OAuth2 providers.
@@ -252,7 +265,7 @@ func (p *oauthProvider) Exchange(ctx context.Context, code, redirectURI string) 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch profile: status %d: %s", resp.StatusCode, truncateForLog(raw))
 	}
-	return p.spec.parse(raw)
+	return p.spec.parse(raw, tok)
 }
 
 // openidBody is the shared OIDC userinfo shape (google / microsoft).
@@ -265,7 +278,7 @@ type openidBody struct {
 	PreferredUsername string `json:"preferred_username"`
 }
 
-func parseGoogleProfile(raw []byte) (*Profile, error) {
+func parseGoogleProfile(raw []byte, _ *oauth2.Token) (*Profile, error) {
 	var body openidBody
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, fmt.Errorf("decode google profile: %w", err)
@@ -273,14 +286,26 @@ func parseGoogleProfile(raw []byte) (*Profile, error) {
 	if body.Sub == "" {
 		return nil, fmt.Errorf("google profile has no sub claim")
 	}
+	// Google always emits email_verified and verifies every address it
+	// returns (gmail accounts at signup, workspace domains at tenant setup),
+	// so the claim backs both auto-register and the merge.
 	verified := false
 	if body.EmailVerified != nil {
 		verified = *body.EmailVerified
 	}
-	return newProfile(body.Sub, body.Email, verified, body.Name, body.Picture, raw), nil
+	return newProfile(body.Sub, body.Email, verified, verified, body.Name, body.Picture, raw), nil
 }
 
-func parseMicrosoftProfile(raw []byte) (*Profile, error) {
+// microsoftIDTokenClaims is the subset of the Entra id_token claims used for
+// the nOAuth mitigations (Descope, 2023): xms_edov vouches that the issuer
+// tenant DNS-verified the domain of its own email claim.
+type microsoftIDTokenClaims struct {
+	Email         string `json:"email"`
+	EmailVerified *bool  `json:"email_verified"`
+	XmsEdov       bool   `json:"xms_edov"`
+}
+
+func parseMicrosoftProfile(raw []byte, tok *oauth2.Token) (*Profile, error) {
 	var body openidBody
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, fmt.Errorf("decode microsoft profile: %w", err)
@@ -289,20 +314,40 @@ func parseMicrosoftProfile(raw []byte) (*Profile, error) {
 		return nil, fmt.Errorf("microsoft profile has no sub claim")
 	}
 	email := body.Email
-	// Some tenants expose the address only as preferred_username (UPN).
+	upnFallback := false
+	// Some tenants expose the address only as preferred_username (UPN). The
+	// UPN is an admin-settable login name, not an address the tenant verified:
+	// keep it for display, but it must never confirm itself (a tenant admin
+	// can freely point it at someone else's address).
 	if email == "" && strings.Contains(body.PreferredUsername, "@") {
 		email = body.PreferredUsername
+		upnFallback = true
 	}
-	// Microsoft omits email_verified on several tenants; a returned address
-	// is an account-verified one there.
-	verified := email != ""
-	if body.EmailVerified != nil {
+	// Only explicit wire claims count as verification. Mere presence of an
+	// address does not: with tenant=common any Entra tenant can authenticate,
+	// and its admin can set mail on their users to a victim's address — the
+	// nOAuth account-takeover pattern.
+	verified := false
+	if body.EmailVerified != nil && !upnFallback {
 		verified = *body.EmailVerified
 	}
-	return newProfile(body.Sub, email, verified, body.Name, body.Picture, raw), nil
+	// xms_edov (id_token) re-opens the merge when it vouches for the exact
+	// address in use; the id_token comes straight from the token endpoint
+	// over TLS (code flow, confidential client — OIDC §3.1.3.7 allows
+	// reading its claims without re-verifying the JWS, unlike Apple's
+	// browser-borne form_post token which IS verified).
+	if claims, ok := decodeIDTokenClaims(tok); ok {
+		if claims.XmsEdov && strings.EqualFold(strings.TrimSpace(claims.Email), email) {
+			verified = true
+		}
+		if claims.EmailVerified != nil && *claims.EmailVerified && !upnFallback {
+			verified = true
+		}
+	}
+	return newProfile(body.Sub, email, verified, verified, body.Name, body.Picture, raw), nil
 }
 
-func parseFacebookProfile(raw []byte) (*Profile, error) {
+func parseFacebookProfile(raw []byte, _ *oauth2.Token) (*Profile, error) {
 	var body struct {
 		ID      string `json:"id"`
 		Name    string `json:"name"`
@@ -319,18 +364,51 @@ func parseFacebookProfile(raw []byte) (*Profile, error) {
 	if body.ID == "" {
 		return nil, fmt.Errorf("facebook profile has no id")
 	}
-	// Facebook emails are account-verified by the platform.
-	return newProfile(body.ID, body.Email, body.Email != "", body.Name, body.Picture.Data.URL, raw), nil
+	// Facebook emails are account-verified by the platform (unverified or
+	// missing addresses are omitted from the response), so presence implies
+	// verified for auto-register. But no verification claim travels on the
+	// wire, so the address is never trusted for the auto-merge into an
+	// existing account — those bindings are made via explicit link only.
+	verified := body.Email != ""
+	return newProfile(body.ID, body.Email, verified, false, body.Name, body.Picture.Data.URL, raw), nil
+}
+
+// decodeIDTokenClaims extracts the payload claims of the id_token returned
+// directly by the token endpoint ("" / absent when the provider did not send
+// one).
+func decodeIDTokenClaims(tok *oauth2.Token) (*microsoftIDTokenClaims, bool) {
+	if tok == nil {
+		return nil, false
+	}
+	rawIDToken, ok := tok.Extra("id_token").(string)
+	if !ok || rawIDToken == "" {
+		return nil, false
+	}
+	parts := strings.Split(rawIDToken, ".")
+	if len(parts) != 3 {
+		return nil, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, false
+	}
+	claims := &microsoftIDTokenClaims{}
+	if err := json.Unmarshal(payload, claims); err != nil {
+		return nil, false
+	}
+	return claims, true
 }
 
 // newProfile assembles a Profile and keeps the raw payload as a map.
-func newProfile(providerUserID, email string, emailVerified bool, displayName, avatarURL string, raw []byte) *Profile {
+// emailMergeAllowed must imply emailVerified (see Profile.EmailMergeAllowed).
+func newProfile(providerUserID, email string, emailVerified, emailMergeAllowed bool, displayName, avatarURL string, raw []byte) *Profile {
 	p := &Profile{
-		ProviderUserID: providerUserID,
-		Email:          strings.TrimSpace(email),
-		EmailVerified:  emailVerified,
-		DisplayName:    displayName,
-		AvatarURL:      avatarURL,
+		ProviderUserID:    providerUserID,
+		Email:             strings.TrimSpace(email),
+		EmailVerified:     emailVerified,
+		EmailMergeAllowed: emailMergeAllowed,
+		DisplayName:       displayName,
+		AvatarURL:         avatarURL,
 	}
 	_ = json.Unmarshal(raw, &p.Raw)
 	return p

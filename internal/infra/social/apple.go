@@ -123,10 +123,14 @@ func (p *appleProvider) exchangeIDToken(ctx context.Context, code, redirectURI s
 	if err != nil {
 		return nil, err
 	}
+	// The id_token is JWKS-verified, so its email_verified claim is an
+	// explicit wire signal and backs the auto-merge (like Google's).
+	verified := flexibleBool(claims.EmailVerified)
 	profile := &Profile{
-		ProviderUserID: claims.Subject,
-		Email:          strings.TrimSpace(claims.Email),
-		EmailVerified:  flexibleBool(claims.EmailVerified),
+		ProviderUserID:    claims.Subject,
+		Email:             strings.TrimSpace(claims.Email),
+		EmailVerified:     verified,
+		EmailMergeAllowed: verified,
 	}
 	if form != nil {
 		mergeAppleUser(profile, form.Get("user"))

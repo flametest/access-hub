@@ -288,8 +288,12 @@ func (s *socialServiceImpl) resolveSocialUser(ctx context.Context, r *txRepos, p
 		return "", err
 	}
 
-	// 2. Verified-email auto-merge keeps the existing identity.
-	if profile.EmailVerified && profile.Email != "" {
+	// 2. Verified-email auto-merge keeps the existing identity. The provider
+	// must vouch the exact address on the wire (EmailMergeAllowed — explicit
+	// verification claims or Microsoft xms_edov); presence-only trust
+	// (Facebook) and admin-settable Entra mail/UPN claims never merge here,
+	// they can only bind via an explicit logged-in link (nOAuth mitigation).
+	if profile.EmailMergeAllowed && profile.EmailVerified && profile.Email != "" {
 		user, uErr := r.users.FindByEmail(ctx, profile.Email)
 		if uErr != nil && !repository.IsNotFound(uErr) {
 			return "", uErr

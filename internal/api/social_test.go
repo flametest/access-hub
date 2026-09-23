@@ -46,7 +46,10 @@ func newFakeSocial(id, email string, verified bool) *fakeSocialProvider {
 			ProviderUserID: id + "-user-1",
 			Email:          email,
 			EmailVerified:  verified,
-			DisplayName:    strings.ToUpper(id[:1]) + id[1:] + " User",
+			// Claim-backed provider (Google-like): the verification travels
+			// on the wire, so the address is merge-trusted.
+			EmailMergeAllowed: verified,
+			DisplayName:       strings.ToUpper(id[:1]) + id[1:] + " User",
 		},
 	}
 }
@@ -168,6 +171,34 @@ func TestSocialVerifiedEmailMerge(t *testing.T) {
 	status, body = env.doJSON("GET", "/api/v1/me", env.str(body, "access_token"), nil)
 	if status != 200 || env.str(body, "username") != "ada" {
 		t.Fatalf("social login must merge into the existing identity ada: %d %v", status, body)
+	}
+}
+
+func TestSocialPresenceOnlyEmailNeverMerges(t *testing.T) {
+	// nOAuth regression: a profile whose address is verified only by
+	// presence (no wire claim — Facebook-style, or an Entra mail attribute
+	// a hostile tenant admin can rewrite) must not auto-merge into an
+	// existing account; without auto-register it is simply not_registered.
+	env := newOAuthEnv(t)
+	env.tc.CfgVal.Auth.AllowAutoRegister = false
+	passwordToken := env.registerIdentity("ada", "ada@test.dev", "AdaPassw0rd")
+	_ = passwordToken
+	fp := &fakeSocialProvider{
+		id:      "fake",
+		enabled: true,
+		profile: &social.Profile{
+			ProviderUserID: "fake-user-1",
+			Email:          "ada@test.dev",
+			EmailVerified:  true, // presence-implied only
+			DisplayName:    "Fake User",
+		},
+	}
+	env.tc.SocialVal["fake"] = fp
+
+	loc := env.socialStart("fake", "login", "")
+	loc = env.socialCallback("fake", "good", fp.lastState)
+	if got := locationParam(loc, "error"); got != "not_registered" {
+		t.Fatalf("presence-only email must not merge: want error=not_registered, got %s", loc)
 	}
 }
 

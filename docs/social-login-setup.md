@@ -26,13 +26,19 @@ Config lives in `deploy/server-config.yaml` under `Social:` — per-organization
 4. `Social.microsoft.clientId` / `clientSecret` / `tenant` (`common` default; pin to an org tenant for B2B)
 5. Scopes: `openid email profile` (profile via Microsoft Graph `/oidc/userinfo`)
 
+**nOAuth hardening (2026-09)**: with `tenant: common` any Entra tenant can authenticate, and its admin can freely rewrite their users' `mail`/UPN to someone else's address. Access-hub therefore never trusts a Microsoft address just because it is present:
+
+- The auto-merge into an existing Company ID only runs on explicit wire signals — `email_verified: true`, or `xms_edov: true` in the id_token bound to the exact address in use. A UPN-derived (`preferred_username`) address counts as verified only when the token itself carries and vouches that exact address.
+- Everything else (including a bare `email` claim and the UPN fallback) is treated as unverified: it can neither merge nor auto-register; the provider identity can only be bound via an explicit logged-in link (`mode=link`).
+- For B2B deployments pin `tenant` to your own org tenant so the trust boundary becomes your tenant admins.
+
 ## Facebook
 
 1. developers.facebook.com → Create App → add **Facebook Login** product
 2. Valid OAuth Redirect URIs: `{IssuerURL}/api/v1/auth/social/facebook/callback`
 3. App settings → copy App ID / App secret
 4. `Social.facebook.clientId` / `clientSecret`
-5. Scopes: `email,public_profile` — the email permission requires App Review for production apps; Facebook emails are treated as verified
+5. Scopes: `email,public_profile` — the email permission requires App Review for production apps. Facebook omits unverified addresses, so a returned email counts as verified for auto-register; but since no verification claim travels on the wire, Facebook emails never auto-merge into an existing Company ID — those bindings are made via explicit link only (nOAuth hardening, same as Microsoft)
 
 ## Apple (Sign in with Apple)
 
@@ -57,4 +63,4 @@ Social:
 - Login buttons navigate to `GET /api/v1/auth/social/{provider}/start?redirect=/workspaces` (full browser navigation)
 - Completion lands on the portal at `/social/complete?login_code=...` → `POST /api/v1/auth/social/complete` exchanges it once for tokens (or the TOTP challenge); failures land with `?error=not_registered|account_disabled|already_linked|invalid_state|provider_error`
 - Account linking: `start?mode=link` (identity token) binds the provider identity to the current user; `GET /api/v1/me/social-identities` + `DELETE /api/v1/me/social-identities/{id}` manage bindings (the last remaining sign-in method cannot be removed)
-- Verified provider emails **auto-merge** into an existing Company ID; otherwise a new identity is auto-registered when `Auth.allowAutoRegister` is true
+- Merge vs register: provider emails backed by an explicit verification claim (Google / Apple `email_verified`, Microsoft `email_verified` or `xms_edov` bound to the exact address) **auto-merge** into an existing Company ID; presence-only addresses (Facebook, bare Microsoft `email`/UPN) never merge and only auto-register when `Auth.allowAutoRegister` is true
