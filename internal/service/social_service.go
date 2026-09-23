@@ -455,7 +455,7 @@ func (s *socialServiceImpl) linkCallback(ctx context.Context, state *socialState
 // reused as-is), otherwise the standard token pair.
 func (s *socialServiceImpl) Complete(ctx context.Context, loginCode, device, ip string) (*dto.SocialCompleteResp, error) {
 	code := strings.TrimSpace(loginCode)
-	keys := []string{"socialcomplete:ip:" + ip}
+	keys := []guardKey{{name: "socialcomplete:ip:" + ip}}
 	if err := guardCheckLock(ctx, s.c, keys); err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ package password
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/flametest/vita/verrors"
@@ -66,6 +67,32 @@ func Verify(hash, pw string) error {
 		return verrors.UnauthorizedError("invalid credentials")
 	}
 	return nil
+}
+
+// dummyVerify state: the bcrypt digest is computed lazily (once per cost)
+// and only the comparison repeats per call.
+var (
+	dummyMu   sync.Mutex
+	dummyHash string
+	dummyCost int
+)
+
+// DummyVerify burns one bcrypt comparison at the given cost. Login paths
+// call it for identifiers that do not exist so a missing account is
+// indistinguishable from a wrong password by response timing.
+func DummyVerify(cost int) {
+	dummyMu.Lock()
+	if dummyHash == "" || dummyCost != cost {
+		h, err := Hash("access-hub timing equalizer", cost)
+		if err != nil {
+			dummyMu.Unlock()
+			return
+		}
+		dummyHash, dummyCost = h, cost
+	}
+	h := dummyHash
+	dummyMu.Unlock()
+	_ = Verify(h, "")
 }
 
 // ValidatePolicy enforces the password policy:

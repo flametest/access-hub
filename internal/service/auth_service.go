@@ -124,7 +124,16 @@ func (s *authServiceImpl) Register(ctx context.Context, req *dto.RegisterReq, de
 
 func (s *authServiceImpl) Login(ctx context.Context, req *dto.LoginReq, device, ip string) (*dto.LoginResp, error) {
 	identifier := strings.ToLower(strings.TrimSpace(req.Identifier))
-	keys := []string{"idt:" + identifier, "ip:" + ip}
+	// Anti-enumeration + anti-lockout-DoS guard keys: the low-threshold key is
+	// the (ip, identifier) PAIR — anyone can still trip it, but only for
+	// their own IP, never for a victim logging in from elsewhere. The
+	// standalone per-ip key carries a 10x threshold as a spraying backstop.
+	// There is deliberately NO per-identifier key: a remote attacker must not
+	// be able to lock a victim's account with a handful of wrong passwords.
+	keys := []guardKey{
+		{name: "pair:" + ip + ":" + identifier},
+		{name: "ip:" + ip, maxAttempts: s.c.Cfg().Auth.LoginMaxAttempts * 10},
+	}
 	if err := s.checkLoginLock(ctx, keys); err != nil {
 		return nil, err
 	}
@@ -133,22 +142,28 @@ func (s *authServiceImpl) Login(ctx context.Context, req *dto.LoginReq, device, 
 		if !repository.IsNotFound(err) {
 			return nil, verrors.Wrap(err, "find user by identifier")
 		}
+		// Equalize timing with the real-user path (bcrypt) and answer
+		// exactly like a wrong password: status code and latency must not
+		// reveal whether the identifier exists.
+		password.DummyVerify(s.c.Cfg().Auth.BcryptCost)
 		s.recordLoginFailure(ctx, keys)
 		writeAudit(ctx, s.c, ActorSystem, "", nil, AuditLoginFailed, "identifier", identifier,
 			map[string]any{"reason": "unknown identifier"}, ip, device)
 		return nil, verrors.UnauthorizedError("invalid credentials")
 	}
 	if user.Status != domain.UserStatusActive {
+		password.DummyVerify(s.c.Cfg().Auth.BcryptCost)
 		s.recordLoginFailure(ctx, keys)
 		writeAudit(ctx, s.c, ActorIdentity, user.Id, nil, AuditLoginFailed, "user", user.Id,
 			map[string]any{"reason": "disabled"}, ip, device)
-		return nil, verrors.ForbiddenError("account disabled")
+		return nil, verrors.UnauthorizedError("invalid credentials")
 	}
 	if user.PasswordHash == nil || *user.PasswordHash == "" {
+		password.DummyVerify(s.c.Cfg().Auth.BcryptCost)
 		s.recordLoginFailure(ctx, keys)
 		writeAudit(ctx, s.c, ActorIdentity, user.Id, nil, AuditLoginFailed, "user", user.Id,
 			map[string]any{"reason": "no password set"}, ip, device)
-		return nil, verrors.ForbiddenError("password not set, sign in with an email code first")
+		return nil, verrors.UnauthorizedError("invalid credentials")
 	}
 	if err := password.Verify(*user.PasswordHash, req.Password); err != nil {
 		s.recordLoginFailure(ctx, keys)
@@ -189,11 +204,19 @@ func (s *authServiceImpl) AccountLogin(ctx context.Context, req *dto.AccountLogi
 		return nil, verrors.ForbiddenError("app is disabled")
 	}
 	identifier := strings.ToLower(strings.TrimSpace(req.Identifier))
-	keys := []string{"app:" + appKey + ":" + identifier, "idt:" + identifier, "ip:" + ip}
+	// Same anti-lockout-DoS shape as the portal login: app+identifier and the
+	// (ip, identifier) pair carry the default threshold, the per-ip key an
+	// elevated one; no portal-wide per-identifier lock.
+	keys := []guardKey{
+		{name: "app:" + appKey + ":" + identifier},
+		{name: "pair:" + appKey + ":" + ip + ":" + identifier},
+		{name: "ip:" + ip, maxAttempts: s.c.Cfg().Auth.LoginMaxAttempts * 10},
+	}
 	if err := s.checkLoginLock(ctx, keys); err != nil {
 		return nil, err
 	}
 	fail := func(reason string) error {
+		password.DummyVerify(s.c.Cfg().Auth.BcryptCost)
 		s.recordLoginFailure(ctx, keys)
 		writeAudit(ctx, s.c, ActorSystem, "", nil, AuditLoginFailed, "app", appKey,
 			map[string]any{"reason": reason, "identifier": identifier}, ip, device)
@@ -318,7 +341,7 @@ func (s *authServiceImpl) EmailLogin(ctx context.Context, req *dto.EmailLoginReq
 	// refreshes the per-code attempt budget (checkEmailCode), never this
 	// lock. Without it an attacker would get EmailCodeMaxAttempts fresh
 	// guesses every resend interval — ~5.8k tries/day against a 6-digit code.
-	keys := []string{"eml:" + email, "ip:" + ip}
+	keys := []guardKey{{name: "eml:" + email}, {name: "ip:" + ip}}
 	if err := s.checkLoginLock(ctx, keys); err != nil {
 		return nil, err
 	}
@@ -381,7 +404,7 @@ func (s *authServiceImpl) Login2FA(ctx context.Context, req *dto.Login2FAReq, de
 		return nil, verrors.UnauthorizedError("invalid or expired mfa token")
 	}
 	userID := strings.TrimPrefix(claims.Subject, "user:")
-	keys := []string{"mfa:" + userID, "ip:" + ip}
+	keys := []guardKey{{name: "mfa:" + userID}, {name: "ip:" + ip}}
 	if err := guardCheckLock(ctx, s.c, keys); err != nil {
 		return nil, err
 	}
@@ -574,26 +597,34 @@ const (
 	kvMFAFailPrefix = "mfa:fail:"
 )
 
+// guardKey is one lockout counter: name is the kv key suffix and
+// maxAttempts the failure count that locks it (0 = the configured
+// LoginMaxAttempts).
+type guardKey struct {
+	name        string
+	maxAttempts int
+}
+
 // checkLoginLock rejects the request when any applicable lock key is set.
-func (s *authServiceImpl) checkLoginLock(ctx context.Context, keys []string) error {
+func (s *authServiceImpl) checkLoginLock(ctx context.Context, keys []guardKey) error {
 	return guardCheckLock(ctx, s.c, keys)
 }
 
-// recordLoginFailure increments the failure counters and locks when the
-// configured attempt limit is reached.
-func (s *authServiceImpl) recordLoginFailure(ctx context.Context, keys []string) {
+// recordLoginFailure increments the failure counters and locks a key when
+// its own attempt limit is reached.
+func (s *authServiceImpl) recordLoginFailure(ctx context.Context, keys []guardKey) {
 	guardRecordFailure(ctx, s.c, keys)
 }
 
-func (s *authServiceImpl) clearLoginFailures(ctx context.Context, keys []string) {
+func (s *authServiceImpl) clearLoginFailures(ctx context.Context, keys []guardKey) {
 	guardClearFailures(ctx, s.c, keys)
 }
 
 // guardCheckLock is the shared lock check (login + 2FA challenge guards).
-func guardCheckLock(ctx context.Context, c container.Container, keys []string) error {
+func guardCheckLock(ctx context.Context, c container.Container, keys []guardKey) error {
 	for _, key := range keys {
-		if _, err := c.KV().Get(ctx, kvLoginLockPrefix+key); err == nil {
-			writeAudit(ctx, c, ActorSystem, "", nil, AuditLoginLocked, "guard", key, nil, "", "")
+		if _, err := c.KV().Get(ctx, kvLoginLockPrefix+key.name); err == nil {
+			writeAudit(ctx, c, ActorSystem, "", nil, AuditLoginLocked, "guard", key.name, nil, "", "")
 			return verrors.ForbiddenError("account temporarily locked, try again later")
 		}
 	}
@@ -601,24 +632,30 @@ func guardCheckLock(ctx context.Context, c container.Container, keys []string) e
 }
 
 // guardRecordFailure is the shared failure counter (login + 2FA guards).
-func guardRecordFailure(ctx context.Context, c container.Container, keys []string) {
+// Each key locks at its OWN threshold (maxAttempts, or the configured
+// LoginMaxAttempts when unset).
+func guardRecordFailure(ctx context.Context, c container.Container, keys []guardKey) {
 	cfg := c.Cfg().Auth
 	for _, key := range keys {
-		count, err := c.KV().Incr(ctx, kvLoginFailPrefix+key, cfg.LoginLockDuration)
+		limit := key.maxAttempts
+		if limit <= 0 {
+			limit = cfg.LoginMaxAttempts
+		}
+		count, err := c.KV().Incr(ctx, kvLoginFailPrefix+key.name, cfg.LoginLockDuration)
 		if err != nil {
 			continue
 		}
-		if count >= int64(cfg.LoginMaxAttempts) {
-			_ = c.KV().Set(ctx, kvLoginLockPrefix+key, "1", cfg.LoginLockDuration)
-			_ = c.KV().Del(ctx, kvLoginFailPrefix+key)
-			writeAudit(ctx, c, ActorSystem, "", nil, AuditLoginLocked, "guard", key, nil, "", "")
+		if count >= int64(limit) {
+			_ = c.KV().Set(ctx, kvLoginLockPrefix+key.name, "1", cfg.LoginLockDuration)
+			_ = c.KV().Del(ctx, kvLoginFailPrefix+key.name)
+			writeAudit(ctx, c, ActorSystem, "", nil, AuditLoginLocked, "guard", key.name, nil, "", "")
 		}
 	}
 }
 
-func guardClearFailures(ctx context.Context, c container.Container, keys []string) {
+func guardClearFailures(ctx context.Context, c container.Container, keys []guardKey) {
 	for _, key := range keys {
-		_ = c.KV().Del(ctx, kvLoginFailPrefix+key)
+		_ = c.KV().Del(ctx, kvLoginFailPrefix+key.name)
 	}
 }
 

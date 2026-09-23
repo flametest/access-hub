@@ -126,24 +126,32 @@ func TestBruteforceLockout(t *testing.T) {
 			t.Fatalf("attempt %d locked too early: %v", i+1, err)
 		}
 	}
-	// Lock key set, fail counters cleared.
-	if _, err := tc.KV().Get(ctx, "login:lock:ip:9.9.9.9"); err != nil {
-		t.Fatalf("lock key missing: %v", err)
+	// Lock keys: the (ip, identifier) pair tripped at the configured
+	// threshold; the per-ip key only trips at 10x (spraying backstop).
+	if _, err := tc.KV().Get(ctx, "login:lock:pair:9.9.9.9:"+user.Email); err != nil {
+		t.Fatalf("pair lock key missing: %v", err)
 	}
-	if _, err := tc.KV().Get(ctx, "login:lock:idt:"+user.Email); err != nil {
-		t.Fatalf("identity lock key missing: %v", err)
+	if _, err := tc.KV().Get(ctx, "login:lock:ip:9.9.9.9"); err == nil {
+		t.Fatal("per-ip lock must not trip at the pair threshold")
+	}
+
+	// Anti-lockout-DoS: the same failures must NOT lock the victim logging
+	// in from another IP (there is no per-identifier key anymore).
+	_, err := authSvc.Login(ctx, &dto.LoginReq{Identifier: user.Email, Password: "BrutusPassw0rd"}, "agent", "8.8.8.8")
+	if err != nil {
+		t.Fatalf("victim login from another IP must succeed, got %v", err)
 	}
 
 	// Even the correct password is rejected while locked (1403).
-	_, err := authSvc.Login(ctx, &dto.LoginReq{Identifier: user.Email, Password: "BrutusPassw0rd"}, "agent", "9.9.9.9")
+	_, err = authSvc.Login(ctx, &dto.LoginReq{Identifier: user.Email, Password: "BrutusPassw0rd"}, "agent", "9.9.9.9")
 	var vErr *verrors.Error
 	if !verrors.As(err, &vErr) || vErr.ErrCode() != verrors.ForbiddenCode {
 		t.Fatalf("locked login error = %v, want 1403", err)
 	}
 
 	// Successful login clears the counters.
+	_ = tc.KV().Del(ctx, "login:lock:pair:9.9.9.9:"+user.Email)
 	_ = tc.KV().Del(ctx, "login:lock:ip:9.9.9.9")
-	_ = tc.KV().Del(ctx, "login:lock:idt:"+user.Email)
 	resp, err := authSvc.Login(ctx, &dto.LoginReq{Identifier: user.Email, Password: "BrutusPassw0rd"}, "agent", "9.9.9.9")
 	if err != nil {
 		t.Fatalf("login: %v", err)
@@ -151,7 +159,7 @@ func TestBruteforceLockout(t *testing.T) {
 	if resp.AccessToken == "" || resp.RefreshToken == "" || resp.TokenType != "Bearer" {
 		t.Fatal("login must return a Bearer token pair")
 	}
-	if _, err := tc.KV().Get(ctx, "login:fail:idt:"+user.Email); err != kv.ErrNotFound {
+	if _, err := tc.KV().Get(ctx, "login:fail:pair:9.9.9.9:"+user.Email); err != kv.ErrNotFound {
 		t.Fatal("success must clear the failure counter")
 	}
 
@@ -351,4 +359,42 @@ func TestEmailLoginGuessLockoutSurvivesResend(t *testing.T) {
 	if resp.AccessToken == "" {
 		t.Fatal("login must return tokens")
 	}
+}
+
+// TestLoginEnumerationIsUniform pins the anti-enumeration contract: an
+// unknown identifier, a disabled identity and a passwordless identity all
+// answer with the SAME 401 "invalid credentials" a wrong password gets.
+func TestLoginEnumerationIsUniform(t *testing.T) {
+	tc, authSvc, _ := newAuthEnv(t)
+	ctx := context.Background()
+	user := seedIdentity(t, tc, "enumy", "enumy@test.dev", "EnumyPassw0rd")
+
+	assertInvalidCredentials := func(name string, err error) {
+		t.Helper()
+		var vErr *verrors.Error
+		if !verrors.As(err, &vErr) || vErr.ErrCode() != verrors.UnauthorizedCode ||
+			!strings.Contains(err.Error(), "invalid credentials") {
+			t.Fatalf("%s must be 401 invalid credentials, got %v", name, err)
+		}
+	}
+
+	// Unknown identifier (time-equalized with a dummy bcrypt comparison).
+	_, err := authSvc.Login(ctx, &dto.LoginReq{Identifier: "ghost@test.dev", Password: "WhateverPass1"}, "agent", "6.6.6.1")
+	assertInvalidCredentials("unknown identifier", err)
+
+	// Disabled identity.
+	if err := tc.UserRepo().UpdateFields(ctx, user.Id, map[string]any{"status": domain.UserStatusDisabled}); err != nil {
+		t.Fatalf("disable user: %v", err)
+	}
+	_, err = authSvc.Login(ctx, &dto.LoginReq{Identifier: user.Email, Password: "EnumyPassw0rd"}, "agent", "6.6.6.2")
+	assertInvalidCredentials("disabled identity", err)
+
+	// Passwordless identity (email-code-only account).
+	if err := tc.UserRepo().UpdateFields(ctx, user.Id, map[string]any{
+		"status": domain.UserStatusActive, "password_hash": nil,
+	}); err != nil {
+		t.Fatalf("clear password: %v", err)
+	}
+	_, err = authSvc.Login(ctx, &dto.LoginReq{Identifier: user.Email, Password: "EnumyPassw0rd"}, "agent", "6.6.6.3")
+	assertInvalidCredentials("passwordless identity", err)
 }
