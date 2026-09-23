@@ -329,8 +329,14 @@ func (s *adminAccountServiceImpl) Update(ctx context.Context, actor *AdminActor,
 		}
 	}
 	if req.Status != nil && *req.Status == domain.AccountStatusDisabled {
-		if err := s.c.SessionRepo().RevokeAllForAccount(ctx, account.Id, nowUTC()); err != nil {
+		now := nowUTC()
+		if err := s.c.SessionRepo().RevokeAllForAccount(ctx, account.Id, now); err != nil {
 			return nil, verrors.Wrap(err, "revoke account sessions")
+		}
+		// Workspace sessions die above; the OAuth refresh tokens minting
+		// account-subject tokens must go with them.
+		if err := s.c.OAuthRefreshTokenRepo().RevokeAllForAccount(ctx, account.Id, now); err != nil {
+			return nil, verrors.Wrap(err, "revoke oauth refresh tokens")
 		}
 	}
 	updated, err := s.c.AccountRepo().FindByID(ctx, account.Id)
@@ -362,6 +368,9 @@ func (s *adminAccountServiceImpl) ResetPassword(ctx context.Context, actor *Admi
 	if err := s.c.SessionRepo().RevokeAllForAccount(ctx, account.Id, nowUTC()); err != nil {
 		return verrors.Wrap(err, "revoke account sessions")
 	}
+	if err := s.c.OAuthRefreshTokenRepo().RevokeAllForAccount(ctx, account.Id, nowUTC()); err != nil {
+		return verrors.Wrap(err, "revoke oauth refresh tokens")
+	}
 	writeAudit(ctx, s.c, ActorAccount, actor.AccountID, app.OrgID, AuditPasswordReset, "account", account.Id,
 		map[string]any{"via": "admin"}, "", "")
 	return nil
@@ -391,6 +400,16 @@ func (s *adminAccountServiceImpl) Transfer(ctx context.Context, actor *AdminActo
 	}
 	if err := s.c.AccountRepo().UpdateFields(ctx, account.Id, map[string]any{"identity_id": target.Id}); err != nil {
 		return verrors.Wrap(err, "transfer account")
+	}
+	// Convergence: the OLD identity must lose all live access to the account
+	// — its workspace sessions and the OAuth refresh tokens bound to the
+	// account (the new identity holds neither yet).
+	now := nowUTC()
+	if err := s.c.SessionRepo().RevokeAllForAccount(ctx, account.Id, now); err != nil {
+		return verrors.Wrap(err, "revoke transferred account sessions")
+	}
+	if err := s.c.OAuthRefreshTokenRepo().RevokeAllForAccount(ctx, account.Id, now); err != nil {
+		return verrors.Wrap(err, "revoke transferred account oauth refresh tokens")
 	}
 	writeAudit(ctx, s.c, ActorAccount, actor.AccountID, app.OrgID, AuditAccountTransferred, "account", account.Id,
 		map[string]any{"from_identity": account.IdentityID, "to_identity": target.Id}, "", "")

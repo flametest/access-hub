@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,7 +21,10 @@ import (
 	"github.com/flametest/access-hub/internal/api"
 	"github.com/flametest/access-hub/internal/bootstrap"
 	"github.com/flametest/access-hub/internal/domain"
+	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/access-hub/internal/testutil"
+	"github.com/flametest/vita/vgorm"
+	"github.com/google/uuid"
 	"github.com/flametest/vita/vserver"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp/totp"
@@ -1081,5 +1085,109 @@ func TestOAuthBrowserAuthorize(t *testing.T) {
 	q := (&url.URL{RawQuery: strings.SplitN(to, "?", 2)[1]}).Query()
 	if !strings.HasPrefix(to, "https://rp.example.com/cb") || q.Get("code") == "" || q.Get("state") != "xyz" {
 		t.Fatalf("redirect = %q", to)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 2d. disable / transfer convergence: workspace (account-scope) sessions and
+// OAuth refresh tokens die with the identity or the account binding.
+// ---------------------------------------------------------------------------
+
+func TestDisableAndTransferConvergeSessions(t *testing.T) {
+	env := newOAuthEnv(t)
+	roleID := env.createAppWithRole("crmc")
+	alice := env.registerIdentity("aliceconv", "aliceconv@test.dev", "AlicePassw0rd")
+	// bob is only the transfer target; the API matches by email.
+	_ = env.registerIdentity("bobconv", "bobconv@test.dev", "BobPassw0rd1")
+	status, body := env.doJSON("POST", "/api/v1/admin/apps/crmc/accounts", env.rootToken, map[string]any{
+		"email": "aliceconv@test.dev", "role_ids": []string{roleID}, "password": "CrmPassw0rd1",
+	})
+	if status != 201 {
+		t.Fatalf("provision account: %d %v", status, body)
+	}
+	accountID := env.str(body, "account_id")
+
+	// Workspace (account-scope) session for alice.
+	status, body = env.doJSON("POST", "/api/v1/me/workspaces/"+accountID+"/token", alice, nil)
+	if status != 200 {
+		t.Fatalf("workspace token: %d %v", status, body)
+	}
+	wsRefresh := env.str(body, "refresh_token")
+
+	// A planted OAuth refresh token owned by alice's identity.
+	uid, err := env.tc.UserRepo().FindByEmail(context.Background(), "aliceconv@test.dev")
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	seedSum := sha256.Sum256([]byte("seeded-oauth-refresh"))
+	seeded := hex.EncodeToString(seedSum[:])
+	if err := env.tc.OAuthRefreshTokenRepo().Create(context.Background(), &model.OAuthRefreshToken{
+		BasePostgres: vgorm.BasePostgres{Id: uuid.NewString()},
+		ClientID:     "cli_test",
+		UserID:       &uid.Id,
+		AccountID:    &accountID,
+		TokenHash:    seeded,
+		Scope:        "openid",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed refresh token: %v", err)
+	}
+
+	// 1) Admin identity-disable must revoke BOTH scopes plus the OAuth
+	// refresh tokens.
+	status, _ = env.doJSON("PATCH", "/api/v1/admin/users/"+uid.Id, env.rootToken, map[string]any{"status": "disabled"})
+	if status != 200 {
+		t.Fatalf("disable user: %d", status)
+	}
+	status, body = env.doJSON("POST", "/api/v1/auth/token/refresh", "", map[string]any{"refresh_token": wsRefresh})
+	if status != 401 {
+		t.Fatalf("workspace refresh after identity disable must 401, got %d %v", status, body)
+	}
+	row, err := env.tc.OAuthRefreshTokenRepo().FindByTokenHash(context.Background(), seeded)
+	if err != nil || row.RevokedAt == nil {
+		t.Fatalf("oauth refresh token must be revoked after identity disable: %v %v", row, err)
+	}
+	status, _ = env.doJSON("PATCH", "/api/v1/admin/users/"+uid.Id, env.rootToken, map[string]any{"status": "active"})
+	if status != 200 {
+		t.Fatalf("re-enable user: %d", status)
+	}
+
+	// 2) Live status enforcement: disable the identity in the DB WITHOUT
+	// revoking the (fresh) workspace session — refresh must still refuse.
+	status, body = env.doJSON("POST", "/api/v1/me/workspaces/"+accountID+"/token", alice, nil)
+	if status != 200 {
+		t.Fatalf("workspace token (2nd): %d %v", status, body)
+	}
+	wsRefresh2 := env.str(body, "refresh_token")
+	if err := env.tc.UserRepo().UpdateFields(context.Background(), uid.Id,
+		map[string]any{"status": domain.UserStatusDisabled}); err != nil {
+		t.Fatalf("disable user (direct): %v", err)
+	}
+	status, body = env.doJSON("POST", "/api/v1/auth/token/refresh", "", map[string]any{"refresh_token": wsRefresh2})
+	if status != 401 {
+		t.Fatalf("refresh with disabled identity must 401, got %d %v", status, body)
+	}
+	if err := env.tc.UserRepo().UpdateFields(context.Background(), uid.Id,
+		map[string]any{"status": domain.UserStatusActive}); err != nil {
+		t.Fatalf("re-enable user (direct): %v", err)
+	}
+
+	// 3) Transfer to bob: alice's live workspace session must be revoked.
+	status, body = env.doJSON("POST", "/api/v1/admin/apps/crmc/accounts/"+accountID+"/transfer", env.rootToken,
+		map[string]any{"identity_email": "bobconv@test.dev"})
+	if status != 200 {
+		t.Fatalf("transfer: %d %v", status, body)
+	}
+	status, body = env.doJSON("POST", "/api/v1/auth/token/refresh", "", map[string]any{"refresh_token": wsRefresh2})
+	if status != 401 {
+		t.Fatalf("old identity's refresh after transfer must 401, got %d %v", status, body)
+	}
+	row, err = env.tc.OAuthRefreshTokenRepo().FindByTokenHash(context.Background(), seeded)
+	if err != nil {
+		t.Fatalf("reload seeded token: %v", err)
+	}
+	// The planted token must now also be revoked by the transfer sweep.
+	if row.RevokedAt == nil {
+		t.Fatalf("oauth refresh token must be revoked after transfer")
 	}
 }

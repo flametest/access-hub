@@ -157,6 +157,9 @@ func (s *tokenServiceImpl) issuePair(
 				return nil, verrors.Wrap(err, "load session identity")
 			}
 		}
+		if identity.Status != domain.UserStatusActive {
+			return nil, verrors.UnauthorizedError("identity is disabled")
+		}
 		claims = jwt.NewIdentityClaims(identity.Id, session.Id, identity.Username, identity.Email, accessTTL)
 	case domain.SessionScopeAccount:
 		if account == nil {
@@ -179,6 +182,15 @@ func (s *tokenServiceImpl) issuePair(
 			if err != nil {
 				return nil, verrors.Wrap(err, "load account identity")
 			}
+		}
+		// Refresh is the long-lived entry point: re-check that the subject
+		// rows are still active so a disable survives even when the session
+		// revocation itself raced or was skipped.
+		if identity.Status != domain.UserStatusActive {
+			return nil, verrors.UnauthorizedError("identity is disabled")
+		}
+		if account.Status != domain.AccountStatusActive {
+			return nil, verrors.UnauthorizedError("account is disabled")
 		}
 		claims = jwt.NewAccountClaims(account.Id, identity.Id, app.Key, session.Id, identity.Username, identity.Email, accessTTL)
 	default:

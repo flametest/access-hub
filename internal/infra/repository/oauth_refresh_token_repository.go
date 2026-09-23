@@ -31,6 +31,9 @@ type OAuthRefreshTokenRepo interface {
 	// detection).
 	RevokeAllForClient(ctx context.Context, clientID string, at time.Time) error
 	RevokeAllForAccount(ctx context.Context, accountID string, at time.Time) error
+	// RevokeAllForUser revokes every OAuth refresh token owned by the
+	// identity (admin identity-disable convergence).
+	RevokeAllForUser(ctx context.Context, userID string, at time.Time) error
 	// Delete soft-deletes one row; zero rows yields NotFoundError.
 	Delete(ctx context.Context, id string) error
 }
@@ -110,6 +113,10 @@ func (r *oauthRefreshTokenRepoImpl) RevokeAllForClient(ctx context.Context, clie
 
 func (r *oauthRefreshTokenRepoImpl) RevokeAllForAccount(ctx context.Context, accountID string, at time.Time) error {
 	return r.revokeWhere(ctx, "account_id = ?", at, accountID)
+}
+
+func (r *oauthRefreshTokenRepoImpl) RevokeAllForUser(ctx context.Context, userID string, at time.Time) error {
+	return r.revokeWhere(ctx, "user_id = ?", at, userID)
 }
 
 func (r *oauthRefreshTokenRepoImpl) Delete(ctx context.Context, id string) error {

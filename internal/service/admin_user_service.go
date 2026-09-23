@@ -69,10 +69,17 @@ func (s *adminUserServiceImpl) UpdateStatus(ctx context.Context, actor *AdminAct
 	if err := s.c.UserRepo().UpdateFields(ctx, user.Id, map[string]any{"status": req.Status}); err != nil {
 		return nil, verrors.Wrap(err, "update user status")
 	}
-	// Disabling an identity cuts its portal sessions immediately.
+	// Disabling an identity cuts every session of it — portal (identity
+	// scope) AND workspace (account scope) — plus its OAuth refresh tokens.
 	if req.Status == domain.UserStatusDisabled {
-		if err := s.c.SessionRepo().RevokeAllForUserByScope(ctx, user.Id, domain.SessionScopeIdentity, nowUTC()); err != nil {
-			return nil, verrors.Wrap(err, "revoke identity sessions")
+		now := nowUTC()
+		for _, scope := range []string{domain.SessionScopeIdentity, domain.SessionScopeAccount} {
+			if err := s.c.SessionRepo().RevokeAllForUserByScope(ctx, user.Id, scope, now); err != nil {
+				return nil, verrors.Wrap(err, "revoke user sessions")
+			}
+		}
+		if err := s.c.OAuthRefreshTokenRepo().RevokeAllForUser(ctx, user.Id, now); err != nil {
+			return nil, verrors.Wrap(err, "revoke oauth refresh tokens")
 		}
 	}
 	updated, err := s.c.UserRepo().FindByID(ctx, user.Id)
