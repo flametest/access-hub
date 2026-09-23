@@ -19,6 +19,7 @@ import (
 
 	"github.com/flametest/access-hub/internal/api"
 	"github.com/flametest/access-hub/internal/bootstrap"
+	"github.com/flametest/access-hub/internal/domain"
 	"github.com/flametest/access-hub/internal/testutil"
 	"github.com/flametest/vita/vserver"
 	"github.com/golang-jwt/jwt/v5"
@@ -750,6 +751,118 @@ func TestOAuthOIDCCodeFlow(t *testing.T) {
 	status, _ = env.doJSON("DELETE", "/api/v1/admin/apps/crm/oauth-clients/"+clientID, env.rootToken, nil)
 	if status != 204 {
 		t.Fatalf("delete client: %d", status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 2b. refresh_token grant: client authentication (RFC 6749 §6) and live
+// subject-status checks (a disabled account/identity cannot refresh).
+// ---------------------------------------------------------------------------
+
+func TestOAuthRefreshClientAuthAndSubjectStatus(t *testing.T) {
+	env := newOAuthEnv(t)
+	roleID := env.createAppWithRole("crmra")
+	alice := env.registerIdentity("alicera", "alicera@test.dev", "AlicePassw0rd")
+	status, body := env.doJSON("POST", "/api/v1/admin/apps/crmra/accounts", env.rootToken, map[string]any{
+		"email": "alicera@test.dev", "role_ids": []string{roleID}, "password": "AliceCrmPass1",
+	})
+	if status != 201 {
+		t.Fatalf("provision account: %d %v", status, body)
+	}
+	clientID, clientSecret := env.createOAuthClient("crmra", "RP RA", "confidential",
+		[]string{"authorization_code", "refresh_token"})
+	otherID, otherSecret := env.createOAuthClient("crmra", "RP RA 2", "confidential",
+		[]string{"authorization_code", "refresh_token"})
+
+	verifier, challenge := pkcePair(t)
+	status, body = env.doJSON("POST", "/api/v1/oauth/authorize", alice, map[string]any{
+		"client_id": clientID, "redirect_uri": "https://rp.example.com/cb",
+		"scope": "openid offline_access", "code_challenge": challenge, "code_challenge_method": "S256",
+	})
+	if status != 200 {
+		t.Fatalf("spa authorize: %d %v", status, body)
+	}
+	code := env.str(body, "redirect_to")
+	if idx := strings.Index(code, "code="); idx >= 0 {
+		code = code[idx+5:]
+		if amp := strings.Index(code, "&"); amp >= 0 {
+			code = code[:amp]
+		}
+	}
+	status, body = env.doForm("/oauth2/token", url.Values{
+		"grant_type": {"authorization_code"}, "code": {code},
+		"redirect_uri": {"https://rp.example.com/cb"}, "code_verifier": {verifier},
+	}, clientID, clientSecret, "")
+	if status != 200 {
+		t.Fatalf("token exchange: %d %v", status, body)
+	}
+	refreshToken := env.str(body, "refresh_token")
+
+	// No client credentials at all -> invalid_client (was: token worked).
+	status, body = env.doForm("/oauth2/token", url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {refreshToken},
+	}, "", "", "")
+	if status != 401 || env.asMap(body)["error"] != "invalid_client" {
+		t.Fatalf("refresh without client auth must be 401 invalid_client, got %d %v", status, body)
+	}
+	// Right client, wrong secret.
+	status, body = env.doForm("/oauth2/token", url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {refreshToken},
+	}, clientID, "sec_wrong", "")
+	if status != 401 || env.asMap(body)["error"] != "invalid_client" {
+		t.Fatalf("refresh with wrong secret must be 401 invalid_client, got %d %v", status, body)
+	}
+	// Another client's credentials must not be able to use the token.
+	status, body = env.doForm("/oauth2/token", url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {refreshToken},
+	}, otherID, otherSecret, "")
+	if status != 401 || env.asMap(body)["error"] != "invalid_client" {
+		t.Fatalf("refresh with foreign client must be 401 invalid_client, got %d %v", status, body)
+	}
+	// Correct credentials still work, and rotate.
+	status, body = env.doForm("/oauth2/token", url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {refreshToken},
+	}, clientID, clientSecret, "")
+	if status != 200 {
+		t.Fatalf("authenticated refresh: %d %v", status, body)
+	}
+	refresh2 := env.str(body, "refresh_token")
+
+	// Disable the account under the token: further refreshes must fail with
+	// invalid_grant even though the token row itself is untouched.
+	user, err := env.tc.UserRepo().FindByEmail(context.Background(), "alicera@test.dev")
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	accounts, err := env.tc.AccountRepo().ListByIdentity(context.Background(), user.Id)
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("list accounts: %v (%d)", err, len(accounts))
+	}
+	if err := env.tc.AccountRepo().UpdateFields(context.Background(),
+		accounts[0].Id, map[string]any{"status": domain.AccountStatusDisabled}); err != nil {
+		t.Fatalf("disable account: %v", err)
+	}
+	status, body = env.doForm("/oauth2/token", url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {refresh2},
+	}, clientID, clientSecret, "")
+	if status != 400 || env.asMap(body)["error"] != "invalid_grant" {
+		t.Fatalf("refresh for disabled account must be invalid_grant, got %d %v", status, body)
+	}
+
+	// Same for a disabled identity.
+	if err := env.tc.AccountRepo().UpdateFields(context.Background(),
+		accounts[0].Id, map[string]any{"status": domain.AccountStatusActive}); err != nil {
+		t.Fatalf("re-enable account: %v", err)
+	}
+	if err := env.tc.UserRepo().UpdateFields(context.Background(),
+		user.Id, map[string]any{"status": domain.UserStatusDisabled}); err != nil {
+		t.Fatalf("disable identity: %v", err)
+	}
+	status, body = env.doForm("/oauth2/token", url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {refresh2},
+	}, clientID, clientSecret, "")
+	if status != 400 || env.asMap(body)["error"] != "invalid_grant" {
+		t.Fatalf("refresh for disabled identity must be invalid_grant, got %d %v", status, body)
 	}
 }
 

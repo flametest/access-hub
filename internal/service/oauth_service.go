@@ -9,6 +9,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"net/http"
 	"net/url"
@@ -448,6 +449,19 @@ func (s *oauthServiceImpl) refreshToken(ctx context.Context, r *http.Request) (m
 	if !grantListed(jsonStringsOf(client.GrantTypes), model.OAuthGrantRefreshToken) {
 		return nil, oauthErr(400, "invalid_grant", "client is not authorized for the refresh_token grant")
 	}
+	// RFC 6749 §6: the refresh grant must authenticate the client.
+	// Confidential clients present their secret (Basic auth or form body,
+	// same convention as the other grants); the presented client_id must be
+	// the token's owner.
+	presentedID, presentedSecret := extractClientCredentials(r)
+	switch {
+	case presentedID == "":
+		return nil, oauthErr(401, "invalid_client", "client authentication required")
+	case presentedID != row.ClientID:
+		return nil, oauthErr(401, "invalid_client", "client_id does not own this refresh token")
+	case !clientSecretMatches(client, presentedSecret):
+		return nil, oauthErr(401, "invalid_client", "invalid client credentials")
+	}
 
 	// Compare-and-swap rotation: two concurrent presentations of the same
 	// (current) token must not both succeed — the loser detects the CAS miss
@@ -525,15 +539,25 @@ func (s *oauthServiceImpl) buildIDToken(ctx context.Context, ti oauth2.TokenInfo
 	return signed, nil
 }
 
-// accountClaimsFor rebuilds the workspace-token claims from DB rows.
+// accountClaimsFor rebuilds the workspace-token claims from DB rows. The
+// subject rows are re-checked here so refresh (and id_token minting) cannot
+// keep minting tokens for an identity or account that has since been
+// disabled — the admin paths revoke outstanding tokens best-effort, but this
+// check is the enforcement point.
 func (s *oauthServiceImpl) accountClaimsFor(ctx context.Context, accountID, identityID string, ttl time.Duration) (*jwt.Claims, error) {
 	account, err := s.c.AccountRepo().FindByID(ctx, accountID)
 	if err != nil {
 		return nil, oauthErr(400, "invalid_grant", "account subject no longer exists")
 	}
+	if account.Status != domain.AccountStatusActive {
+		return nil, oauthErr(400, "invalid_grant", "account subject is not active")
+	}
 	identity, err := s.c.UserRepo().FindByID(ctx, identityID)
 	if err != nil {
 		return nil, oauthErr(400, "invalid_grant", "identity subject no longer exists")
+	}
+	if identity.Status != domain.UserStatusActive {
+		return nil, oauthErr(400, "invalid_grant", "identity subject is not active")
 	}
 	app, err := s.c.AppRepo().FindByID(ctx, account.AppID)
 	if err != nil {
@@ -541,6 +565,16 @@ func (s *oauthServiceImpl) accountClaimsFor(ctx context.Context, accountID, iden
 	}
 	// OAuth-issued tokens carry no session id (no portal session row).
 	return jwt.NewAccountClaims(account.Id, identity.Id, app.Key, "", identity.Username, identity.Email, ttl), nil
+}
+
+// clientSecretMatches verifies a refresh-grant client secret: sha256
+// (constant-time) against the stored hash; secret-less public clients must
+// not present one.
+func clientSecretMatches(client *model.OAuthClient, secret string) bool {
+	if client.SecretHash == nil || *client.SecretHash == "" {
+		return secret == ""
+	}
+	return subtle.ConstantTimeCompare([]byte(sha256Hex(secret)), []byte(*client.SecretHash)) == 1
 }
 
 // identityOfAccount resolves the owning identity of an account.
