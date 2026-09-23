@@ -1318,3 +1318,41 @@ func TestInvitationAcceptRequiresEmailMatch(t *testing.T) {
 		t.Fatalf("real invitee accept: %d %v", status, body)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 2g. authz/check result cache: consulted BEFORE the enforce (a hit skips
+// the evaluation) and keyed with escaped components so distinct obj/act
+// tuples can never alias onto one cached entry.
+// ---------------------------------------------------------------------------
+
+func TestAuthzCheckCacheKeysDoNotCollide(t *testing.T) {
+	env := newOAuthEnv(t)
+	roleID := env.createAppWithRole("crmcz")
+	alice := env.registerIdentity("alicecz", "alicecz@test.dev", "AlicePassw0rd")
+	status, body := env.doJSON("POST", "/api/v1/admin/apps/crmcz/accounts", env.rootToken, map[string]any{
+		"email": "alicecz@test.dev", "role_ids": []string{roleID}, "password": "AliceCrmPass1",
+	})
+	if status != 201 {
+		t.Fatalf("provision account: %d %v", status, body)
+	}
+	accountID := env.str(body, "account_id")
+	check := func(obj, act string) bool {
+		t.Helper()
+		status, body := env.doJSON("POST", "/api/v1/authz/check", alice, map[string]any{
+			"app": "crmcz", "account_id": accountID, "obj": obj, "act": act,
+		})
+		if status != 200 {
+			t.Fatalf("authz/check %s@%s: %d %v", obj, act, status, body)
+		}
+		return env.asMap(body)["allowed"] == true
+	}
+
+	// Granted tuple, then a DIFFERENT tuple whose legacy ':'-joined cache key
+	// would be identical ("order:read:*" vs "order:read:*").
+	if !check("order:read", "*") {
+		t.Fatal("order:read@* must be allowed")
+	}
+	if check("order", "read:*") {
+		t.Fatal("order@read:* must be denied on its own merits (legacy key would alias it to the cached allow)")
+	}
+}

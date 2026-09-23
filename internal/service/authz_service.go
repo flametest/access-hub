@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -100,7 +101,12 @@ func (s *authzServiceImpl) Check(ctx context.Context, req *dto.AuthzCheckReq, ac
 		resource, err := s.c.ResourceRepo().FindByAppAndRoute(ctx, app.Id, req.Method, req.Path)
 		if err != nil {
 			if repository.IsNotFound(err) {
-				return s.answer(ctx, appKey, subject, obj, "*", false)
+				// Unknown route: fail-close deny, not cached.
+				version, vErr := casbinx.GetPolicyVersion(ctx, s.c.KV(), appKey)
+				if vErr != nil {
+					return nil, verrors.Wrap(vErr, "read policy version")
+				}
+				return &dto.AuthzCheckResp{Allowed: false, Version: version}, nil
 			}
 			return nil, verrors.Wrap(err, "find resource by route")
 		}
@@ -111,34 +117,41 @@ func (s *authzServiceImpl) Check(ctx context.Context, req *dto.AuthzCheckReq, ac
 		act = "*"
 	}
 
-	// Fail-close: an enforcer error is surfaced as 1500, never an allow.
-	allowed, err := s.c.Enforcer().Enforce(subject, appKey, obj, act)
-	if err != nil {
-		return nil, err
-	}
-	return s.answer(ctx, appKey, subject, obj, act, allowed)
+	return s.cachedEnforce(ctx, appKey, subject, obj, act)
 }
 
-// answer assembles the response through the result cache.
-func (s *authzServiceImpl) answer(ctx context.Context, appKey, accountID, obj, act string, allowed bool) (*dto.AuthzCheckResp, error) {
+// cachedEnforce answers the decision through the result cache: a hit skips
+// the enforce entirely (the previous order — enforce first, then consult the
+// cache — both wasted the evaluation and could return a stale cached answer
+// instead of the one just computed). authzCacheTTL is the staleness bound
+// for time-dependent ABAC conditions; policy mutations bump the app's policy
+// version, which changes the key and invalidates naturally. Key components
+// are query-escaped: obj/act/app freely contain ":" (which PathEscape would
+// keep, re-creating the collision) and raw concatenation would alias
+// distinct tuples onto one entry.
+func (s *authzServiceImpl) cachedEnforce(ctx context.Context, appKey, subject, obj, act string) (*dto.AuthzCheckResp, error) {
 	version, err := casbinx.GetPolicyVersion(ctx, s.c.KV(), appKey)
 	if err != nil {
 		return nil, verrors.Wrap(err, "read policy version")
 	}
-	key := fmt.Sprintf("%s%s:%s:%s:%s:%d", authzCacheKeyPrefix, appKey, accountID, obj, act, version)
+	key := fmt.Sprintf("%s%s:%s:%s:%s:%d", authzCacheKeyPrefix,
+		url.QueryEscape(appKey), url.QueryEscape(subject), url.QueryEscape(obj), url.QueryEscape(act), version)
 	if cached, err := s.c.KV().Get(ctx, key); err == nil {
 		return &dto.AuthzCheckResp{Allowed: cached == "1", Version: version}, nil
 	} else if err != kv.ErrNotFound {
 		return nil, verrors.Wrap(err, "read authz cache")
 	}
+	// Fail-close: an enforcer error is surfaced as 1500, never an allow.
+	allowed, err := s.c.Enforcer().Enforce(subject, appKey, obj, act)
+	if err != nil {
+		return nil, err
+	}
 	value := "0"
 	if allowed {
 		value = "1"
 	}
-	if obj != "" {
-		if err := s.c.KV().Set(ctx, key, value, authzCacheTTL); err != nil {
-			return nil, verrors.Wrap(err, "write authz cache")
-		}
+	if err := s.c.KV().Set(ctx, key, value, authzCacheTTL); err != nil {
+		return nil, verrors.Wrap(err, "write authz cache")
 	}
 	return &dto.AuthzCheckResp{Allowed: allowed, Version: version}, nil
 }
