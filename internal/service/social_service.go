@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"html"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -592,7 +591,9 @@ func (s *socialServiceImpl) issueLoginCode(ctx context.Context, userID string) (
 }
 
 // sanitizeRedirect validates a portal-relative redirect path: it must start
-// with a single "/" (no scheme-relative "//", no backslash tricks).
+// with a single "/" (no scheme-relative "//", no backslash tricks) and carry
+// only URL-safe characters, so it can never break out of the JS/HTML
+// contexts it is later rendered into (see formPostHTML).
 func sanitizeRedirect(redirect, fallback string) string {
 	if redirect == "" {
 		return fallback
@@ -600,7 +601,24 @@ func sanitizeRedirect(redirect, fallback string) string {
 	if !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") || strings.Contains(redirect, "\\") {
 		return fallback
 	}
+	for _, r := range redirect {
+		if !isSafeRedirectRune(r) {
+			return fallback
+		}
+	}
 	return redirect
+}
+
+// isSafeRedirectRune allows unreserved + reserved URL characters (RFC 3986),
+// which excludes the HTML/JS metacharacters < > " ' and backslash.
+func isSafeRedirectRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case strings.ContainsRune("/-._~:?#[]@!$&()*+,;=%", r):
+		return true
+	}
+	return false
 }
 
 // portalTarget composes an absolute portal URL: {PortalURL}{path}?{query}.
@@ -648,10 +666,19 @@ func (s *socialServiceImpl) outcome(target string, form social.Form) *SocialCall
 }
 
 // formPostHTML renders the minimal self-replacing page for form_post
-// callbacks.
+// callbacks. target is embedded into a script context via json.Marshal:
+// JSON escapes <, > and &, so the string can never close the <script> tag
+// (strconv.Quote does not escape them), and remains a valid JS literal.
+// The noscript href uses attribute-context escaping on top of the redirect
+// whitelist applied by sanitizeRedirect.
 func formPostHTML(target string) string {
+	targetJSON, err := json.Marshal(target)
+	if err != nil { // unreachable for strings (invalid UTF-8 is coerced)
+		return `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+			`<meta http-equiv="refresh" content="0;url=/"></head></html>`
+	}
 	return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Signing in…</title></head>` +
-		`<body><script>location.replace(` + strconv.Quote(target) + `);</script>` +
+		`<body><script>location.replace(` + string(targetJSON) + `);</script>` +
 		`<noscript><a href="` + html.EscapeString(target) + `">Continue</a></noscript></body></html>`
 }
 
