@@ -50,8 +50,14 @@ func consumeTwoFACode(ctx context.Context, c container.Container, row *model.TOT
 		if !ok || matched <= row.LastUsedStep {
 			return verrors.ForbiddenError("invalid verification code")
 		}
-		if err := c.TOTPSecretRepo().UpdateFields(ctx, row.Id, map[string]any{"last_used_step": matched}); err != nil {
+		// Conditional advance: a concurrent verification of the same step
+		// loses the compare-and-swap and is rejected (single-use steps).
+		advanced, err := c.TOTPSecretRepo().AdvanceStep(ctx, row.Id, matched)
+		if err != nil {
 			return verrors.Wrap(err, "record totp step")
+		}
+		if !advanced {
+			return verrors.ForbiddenError("invalid verification code")
 		}
 		return nil
 	}
@@ -60,8 +66,15 @@ func consumeTwoFACode(ctx context.Context, c container.Container, row *model.TOT
 	for i, existing := range hashes {
 		if existing == hash {
 			remaining := append(hashes[:i:i], hashes[i+1:]...)
-			if err := c.TOTPSecretRepo().UpdateFields(ctx, row.Id, map[string]any{"backup_codes": encodeJSONStrings(remaining)}); err != nil {
+			// Compare-and-swap on the whole set: the loser of a concurrent
+			// presentation finds the stored set changed and is rejected
+			// (single-use backup codes).
+			consumed, err := c.TOTPSecretRepo().ConsumeBackupCodeCAS(ctx, row.Id, row.BackupCodes, encodeJSONStrings(remaining))
+			if err != nil {
 				return verrors.Wrap(err, "consume backup code")
+			}
+			if !consumed {
+				return verrors.ForbiddenError("invalid verification code")
 			}
 			return nil
 		}

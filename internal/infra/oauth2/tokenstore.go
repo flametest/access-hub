@@ -95,7 +95,12 @@ func (s *TokenStore) RemoveByCode(ctx context.Context, code string) error {
 	return s.kv.Del(ctx, kvCodePrefix+code)
 }
 
-// GetByCode loads the code record.
+// GetByCode loads the code record and atomically marks it consumed: the
+// kv.Incr test-and-set lets exactly ONE concurrent exchange win (the
+// previous load-then-remove flow left a window where two exchanges of the
+// same code could both proceed). A losing presentation — and any later one —
+// sees an invalid code. Like before, a code only survives its full TTL when
+// it is never presented at all; the marker key expires alongside it.
 func (s *TokenStore) GetByCode(ctx context.Context, code string) (oauth2.TokenInfo, error) {
 	raw, err := s.kv.Get(ctx, kvCodePrefix+code)
 	if err != nil {
@@ -103,6 +108,13 @@ func (s *TokenStore) GetByCode(ctx context.Context, code string) (oauth2.TokenIn
 			return nil, errors.ErrInvalidAuthorizeCode
 		}
 		return nil, err
+	}
+	n, err := s.kv.Incr(ctx, kvCodePrefix+code+":used", 15*time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	if n > 1 {
+		return nil, errors.ErrInvalidAuthorizeCode
 	}
 	var ti model2Token
 	if err := json.Unmarshal([]byte(raw), &ti); err != nil {

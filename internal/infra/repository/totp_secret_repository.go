@@ -22,6 +22,14 @@ type TOTPSecretRepo interface {
 	// Confirm flips confirmed=true (after a valid code check).
 	Confirm(ctx context.Context, id string) error
 	UpdateFields(ctx context.Context, id string, fields map[string]any) error
+	// AdvanceStep atomically moves last_used_step forward (single-use TOTP
+	// steps): false means the step was already consumed by a concurrent
+	// verification.
+	AdvanceStep(ctx context.Context, id string, step int64) (bool, error)
+	// ConsumeBackupCodeCAS replaces the backup-code set only when it still
+	// holds prevJSON (compare-and-swap on the whole array): false means a
+	// concurrent verification consumed the code first.
+	ConsumeBackupCodeCAS(ctx context.Context, id string, prevJSON, nextJSON []byte) (bool, error)
 	// Delete soft-deletes the row (2FA disable).
 	Delete(ctx context.Context, id string) error
 }
@@ -88,6 +96,34 @@ func (r *totpSecretRepoImpl) UpdateFields(ctx context.Context, id string, fields
 	}
 	res := r.db.WithContext(ctx).Model(&model.TOTPSecret{}).Where("id = ?", id).Updates(fields)
 	return updateRowsAffected(res, fmt.Sprintf("totp secret %s not found", id))
+}
+
+// AdvanceStep conditionally moves last_used_step forward: the UPDATE only
+// matches when the stored step is still older than the presented one, so
+// two concurrent verifications of the same window cannot both succeed.
+func (r *totpSecretRepoImpl) AdvanceStep(ctx context.Context, id string, step int64) (bool, error) {
+	res := r.db.WithContext(ctx).Exec(
+		"UPDATE totp_secrets SET last_used_step = ?, version = version + 1 WHERE id = ? AND last_used_step < ? AND deleted_at IS NULL",
+		step, id, step,
+	)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// ConsumeBackupCodeCAS swaps the backup-code set only when the stored set is
+// still byte-identical to what the caller read: two concurrent presentations
+// of the same single-use code cannot both win the compare-and-swap.
+func (r *totpSecretRepoImpl) ConsumeBackupCodeCAS(ctx context.Context, id string, prevJSON, nextJSON []byte) (bool, error) {
+	res := r.db.WithContext(ctx).Exec(
+		"UPDATE totp_secrets SET backup_codes = ?, version = version + 1 WHERE id = ? AND backup_codes = ? AND deleted_at IS NULL",
+		nextJSON, id, prevJSON,
+	)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 func (r *totpSecretRepoImpl) Delete(ctx context.Context, id string) error {
