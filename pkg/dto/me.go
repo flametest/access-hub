@@ -98,7 +98,10 @@ type SessionItem struct {
 	RotationCount int64      `json:"rotation_count"`
 	CreatedAt     time.Time  `json:"created_at"`
 	ExpiresAt     time.Time  `json:"expires_at"`
-	Current       bool       `json:"current"`
+	// Active is false once the session is revoked or past ExpiresAt; the
+	// endpoint returns the full history, so the UI needs the status.
+	Active  bool `json:"active"`
+	Current bool `json:"current"`
 }
 
 // ---------- 2FA self-service ----------

@@ -519,6 +519,7 @@ func (s *meServiceImpl) ListSessions(ctx context.Context, userID, currentSession
 			RotationCount: sess.RotationCount,
 			CreatedAt:     sess.CreatedAt,
 			ExpiresAt:     sess.ExpiresAt,
+			Active:        sess.RevokedAt == nil && time.Now().Before(sess.ExpiresAt),
 			Current:       sess.Id == currentSessionID,
 		})
 	}
@@ -536,11 +537,31 @@ func (s *meServiceImpl) RevokeSession(ctx context.Context, userID, sessionID str
 	if sess.UserID != userID {
 		return verrors.NotFoundError("session not found")
 	}
-	return s.token.RevokeSession(ctx, sessionID)
+	wasActive := sess.RevokedAt == nil && time.Now().Before(sess.ExpiresAt)
+	if err := s.token.RevokeSession(ctx, sessionID); err != nil {
+		return err
+	}
+	// Audit only a state change: re-revoking a dead session is a UI retry, not an event.
+	if wasActive {
+		writeAudit(ctx, s.c, ActorIdentity, userID, nil, AuditSessionRevoked, "session", sessionID,
+			map[string]any{"via": "self", "device": deref(sess.Device), "ip": deref(sess.IP)}, "", "")
+	}
+	return nil
 }
 
 func (s *meServiceImpl) RevokeOtherSessions(ctx context.Context, userID, currentSessionID string) error {
-	return s.token.RevokeAllIdentityExcept(ctx, userID, currentSessionID)
+	// "Sign out other devices" spans both scopes: the sessions page lists
+	// workspace (account-scope) sessions too, so leaving those alive would
+	// contradict the button. The current session survives in both scopes.
+	now := time.Now()
+	for _, scope := range []string{domain.SessionScopeIdentity, domain.SessionScopeAccount} {
+		if err := s.c.SessionRepo().RevokeAllForUserByScopeExcept(ctx, userID, scope, currentSessionID, now); err != nil {
+			return verrors.Wrap(err, "revoke other sessions")
+		}
+	}
+	writeAudit(ctx, s.c, ActorIdentity, userID, nil, AuditSessionRevoked, "user", userID,
+		map[string]any{"via": "revoke_others", "except": currentSessionID}, "", "")
+	return nil
 }
 
 // ---------- 2FA self-service ----------

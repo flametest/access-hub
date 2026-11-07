@@ -15,6 +15,7 @@ import { useToast } from "@/components/toast";
 import { useMe } from "@/hooks/use-me";
 import { use2faStatus } from "@/hooks/use-2fa-status";
 import { useRequireAuth } from "@/hooks/use-require-auth";
+import { useSessions } from "@/hooks/use-sessions";
 import { api, errMessage } from "@/lib/api";
 import {
   SOCIAL_COMPLETE_PATH,
@@ -282,8 +283,39 @@ function ConnectedAccountsCard() {
   );
 }
 
-export default function IdentityPage() {
+/**
+ * Entry card for the sessions/devices page (GET /me/sessions, shared query
+ * key with /identity/sessions). The count covers every active login across
+ * devices, including workspace-scope sessions.
+ */
+function SessionsEntryCard() {
   const router = useRouter();
+  const query = useSessions();
+  const activeCount = (query.data ?? []).filter((s) => s.active).length;
+
+  return (
+    <Card className="mt-4 flex flex-wrap items-center gap-4 p-5 sm:p-6">
+      <span className="grid size-11 flex-none place-items-center rounded-xl bg-ah-accent/15 text-ah-accent">
+        <Icon name="monitor" className="size-5.5" />
+      </span>
+      <div className="min-w-0 flex-1 basis-56">
+        <h2 className="font-bold">Sessions &amp; devices</h2>
+        <p className="mt-0.5 text-[13px] text-white/55">
+          {query.isSuccess
+            ? `${activeCount} active ${
+                activeCount === 1 ? "session" : "sessions"
+              } signed in to this identity.`
+            : "Review the devices signed in to your Company ID and revoke any you don't recognize."}
+        </p>
+      </div>
+      <Button size="sm" variant="secondary" onClick={() => router.push("/identity/sessions")}>
+        Manage
+      </Button>
+    </Card>
+  );
+}
+
+export default function IdentityPage() {  const router = useRouter();
   const { authed } = useRequireAuth();
   const meQuery = useMe(authed);
   const me = meQuery.data;
@@ -375,6 +407,9 @@ export default function IdentityPage() {
 
       {/* Connected social accounts */}
       <ConnectedAccountsCard />
+
+      {/* Sessions & devices entry (counts from the shared /me/sessions query) */}
+      <SessionsEntryCard />
 
       {/* Linked accounts */}
       <div className="mt-9 mb-3 flex flex-wrap items-end justify-between gap-3">

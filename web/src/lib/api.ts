@@ -6,6 +6,7 @@ import {
   toSignInMethods,
   toSocialComplete,
   toSocialIdentities,
+  toSessions,
   toTokenPair,
   toTwoFaEnroll,
   toTwoFaStatus,
@@ -24,6 +25,7 @@ import type {
   RegisterReq,
   ResetPasswordReq,
   SendEmailCodeReq,
+  SessionItem,
   SignInMethod,
   SocialCompleteResult,
   SocialIdentity,
@@ -326,6 +328,20 @@ export const api = {
     request<void>(`/me/social-identities/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+
+  /** Login sessions of the identity — the full history, newest first. */
+  listSessions: async (): Promise<SessionItem[]> =>
+    toSessions(await request<unknown>("/me/sessions")),
+
+  /** Revokes one session (any scope) owned by the identity. */
+  revokeSession: (id: string): Promise<void> =>
+    request<void>(`/me/sessions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  /** Revokes every other session (all scopes); the current one survives. */
+  revokeOtherSessions: (): Promise<void> =>
+    request<void>("/me/sessions", { method: "DELETE" }),
 
   /** TOTP enrollment state for the signed-in identity. */
   get2faStatus: async (): Promise<TwoFaStatus> =>

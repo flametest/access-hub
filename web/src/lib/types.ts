@@ -120,6 +120,30 @@ export interface SignInMethod {
   enabled: boolean;
 }
 
+/**
+ * One login session / device — GET /me/sessions (also DELETE /me/sessions{,/:id}).
+ * The endpoint returns the full history; `active` distinguishes live sessions
+ * from revoked or expired ones.
+ */
+export interface SessionItem {
+  id: string;
+  /** identity (portal) | account (workspace) */
+  scope: string;
+  /** Workspace app key for account-scope sessions. */
+  app_key: string;
+  /** Raw User-Agent string captured at sign-in. */
+  device: string;
+  ip: string;
+  last_used_at?: string | null;
+  rotation_count: number;
+  created_at: string;
+  expires_at: string;
+  /** Neither revoked nor expired. */
+  active: boolean;
+  /** The session the request was authenticated with. */
+  current: boolean;
+}
+
 /** POST /invitations/redeem response. */
 export interface InvitationPreview {
   app_name: string;

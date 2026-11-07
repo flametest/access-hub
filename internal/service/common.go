@@ -105,6 +105,7 @@ const (
 	AuditLoginFailed         = "login_failed"
 	AuditLoginLocked         = "login_locked"
 	AuditLogout              = "logout"
+	AuditSessionRevoked      = "session_revoked"
 	AuditPasswordChanged     = "password_changed"
 	AuditPasswordReset       = "password_reset"
 	AuditAccountActivated    = "account_activated"

@@ -3,6 +3,7 @@ import type {
   Me,
   MfaChallenge,
   PendingInvitation,
+  SessionItem,
   SignInMethod,
   SocialCompleteResult,
   SocialIdentity,
@@ -237,6 +238,31 @@ export function toSocialIdentities(raw: unknown): SocialIdentity[] {
   return pickList(raw, ["identities", "social_identities", "items", "data"])
     .map(toSocialIdentity)
     .filter((identity) => identity.id);
+}
+
+/** One GET /me/sessions row: a login session with its device fingerprint. */
+export function toSession(raw: unknown): SessionItem {
+  const r = asRecord(raw);
+  return {
+    id: str(r.id, r.session_id, r.sessionId),
+    scope: str(r.scope) || "identity",
+    app_key: str(r.app_key, r.appKey, r.app),
+    device: str(r.device, r.user_agent, r.userAgent),
+    ip: str(r.ip, r.remote_ip, r.remoteIp),
+    last_used_at: optStr(r.last_used_at, r.lastUsedAt),
+    rotation_count: Number(r.rotation_count ?? r.rotationCount ?? 0) || 0,
+    created_at: str(r.created_at, r.createdAt),
+    expires_at: str(r.expires_at, r.expiresAt),
+    active: Boolean(r.active ?? false),
+    current: Boolean(r.current ?? r.is_current ?? false),
+  };
+}
+
+/** GET /me/sessions — the full session history, newest first. */
+export function toSessions(raw: unknown): SessionItem[] {
+  return pickList(raw, ["sessions", "items", "data"])
+    .map(toSession)
+    .filter((session) => session.id);
 }
 
 /** Email-matched invitations surfaced after a social sign-in. */

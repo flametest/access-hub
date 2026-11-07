@@ -145,6 +145,19 @@ const PATHS = {
       <path d="M12 3.5v2.3M12 18.2v2.3M3.5 12h2.3M18.2 12h2.3M5.9 5.9l1.6 1.6M16.5 16.5l1.6 1.6M18.1 5.9l-1.6 1.6M7.5 16.5l-1.6 1.6" />
     </>
   ),
+  monitor: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="12" rx="1.8" />
+      <path d="M12 16.5v3" />
+      <path d="M8.5 19.5h7" />
+    </>
+  ),
+  smartphone: (
+    <>
+      <rect x="7" y="3.5" width="10" height="17" rx="2.2" />
+      <path d="M10.5 17.5h3" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof PATHS;
