@@ -42,7 +42,7 @@ req POST /api/v1/auth/login "" "{\"identifier\":\"admin\",\"password\":\"$ADMIN_
 ADMIN_TOKEN=$(jget "$BODY" "['access_token']")
 req POST /api/v1/admin/orgs "$ADMIN_TOKEN" "{\"key\":\"smoke$TS\",\"name\":\"Smoke Org\"}"
 req POST /api/v1/admin/apps "$ADMIN_TOKEN" "{\"key\":\"smoke-app-$TS\",\"org_key\":\"smoke$TS\",\"name\":\"Smoke App\",\"type\":\"web\"}"
-req PUT "/api/v1/admin/apps/smoke-app-$TS/resources:batch" "$ADMIN_TOKEN" \
+req PUT "/api/v1/admin/apps/smoke-app-$TS/resources/batch" "$ADMIN_TOKEN" \
   "{\"items\":[{\"code\":\"order:read\",\"name\":\"Read orders\",\"type\":\"api\",\"method\":\"GET\",\"route_path\":\"/orders\"},{\"code\":\"menu:dashboard\",\"name\":\"Dashboard\",\"type\":\"menu\",\"path\":\"/dashboard\"}]}"
 req POST "/api/v1/admin/apps/smoke-app-$TS/roles" "$ADMIN_TOKEN" "{\"code\":\"member\",\"name\":\"Member\"}"
 ROLE_ID=$(jget "$BODY" "['id']")

@@ -126,7 +126,7 @@ func TestM6CustomRulesAndDeny(t *testing.T) {
 		"key": "crm", "org_key": "acme", "name": "CRM", "type": "web",
 	})
 	expectCode(status, 201, body)
-	status, body = doJSON("PUT", "/api/v1/admin/apps/crm/resources:batch", rootToken, map[string]any{
+	status, body = doJSON("PUT", "/api/v1/admin/apps/crm/resources/batch", rootToken, map[string]any{
 		"items": []any{
 			map[string]any{"type": "menu", "code": "crm.dashboard", "name": "Dashboard", "path": "/", "sort": 1},
 			map[string]any{"type": "api", "code": "order:read", "name": "Read orders", "method": "GET", "route_path": "/api/orders"},
@@ -533,7 +533,7 @@ func TestBatchResourcesRouteIsExact(t *testing.T) {
 		"key": "m6r", "org_key": "m6rorg", "name": "M6R App", "type": "web"})
 
 	// The real batch endpoint still works.
-	status, body := env.doJSON("PUT", "/api/v1/admin/apps/m6r/resources:batch", root, map[string]any{
+	status, body := env.doJSON("PUT", "/api/v1/admin/apps/m6r/resources/batch", root, map[string]any{
 		"items": []any{map[string]any{"type": "api", "code": "m6r:r", "name": "R", "method": "GET", "route_path": "/r"}},
 	})
 	if status != 200 {

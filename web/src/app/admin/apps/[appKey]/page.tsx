@@ -10,6 +10,7 @@ import { Tabs } from "@/components/tabs";
 import { Icon } from "@/components/icon";
 import { AccountsTab } from "@/app/admin/apps/[appKey]/accounts-tab";
 import { CustomRulesTab } from "@/app/admin/apps/[appKey]/custom-rules-tab";
+import { IntegrationTab } from "@/app/admin/apps/[appKey]/integration-tab";
 import { InvitationsTab } from "@/app/admin/apps/[appKey]/invitations-tab";
 import { OAuthClientsTab } from "@/app/admin/apps/[appKey]/oauth-clients-tab";
 import { ResourcesTab } from "@/app/admin/apps/[appKey]/resources-tab";
@@ -24,6 +25,7 @@ const TABS = [
   { key: "invitations", label: "Invitations", icon: "ticket" as const },
   { key: "oauth", label: "OAuth clients", icon: "lock" as const },
   { key: "rules", label: "Custom rules", icon: "settings" as const },
+  { key: "integration", label: "Integration", icon: "shield" as const },
 ];
 
 /**
@@ -103,6 +105,7 @@ export default function AdminAppDetailPage() {
             {activeTab === "invitations" && <InvitationsTab appKey={appKey} />}
             {activeTab === "oauth" && <OAuthClientsTab appKey={appKey} />}
             {activeTab === "rules" && <CustomRulesTab appKey={appKey} />}
+            {activeTab === "integration" && <IntegrationTab app={app} />}
           </div>
         </>
       )}

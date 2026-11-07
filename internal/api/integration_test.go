@@ -182,7 +182,7 @@ func TestFullChain(t *testing.T) {
 	}
 
 	// ---------- 5. batch import resources
-	status, body = doJSON("PUT", "/api/v1/admin/apps/crm/resources:batch", rootToken, map[string]any{
+	status, body = doJSON("PUT", "/api/v1/admin/apps/crm/resources/batch", rootToken, map[string]any{
 		"items": []any{
 			map[string]any{"type": "menu", "code": "crm.dashboard", "name": "Dashboard", "path": "/", "sort": 1},
 			map[string]any{"type": "menu", "code": "crm.users", "name": "Users", "path": "/users", "sort": 2},

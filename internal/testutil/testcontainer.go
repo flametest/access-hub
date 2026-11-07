@@ -370,6 +370,7 @@ var schemaDDL = []string{
 		description TEXT,
 		logo_url TEXT,
 		status TEXT NOT NULL DEFAULT 'active',
+		secret_hash TEXT,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		deleted_at DATETIME

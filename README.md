@@ -71,6 +71,24 @@ docs/design.md         设计方案 v6（讨论与修订史）
 2. **集中鉴权**：`POST /api/v1/authz/check` `{obj: "order:read"}` 或 `{method: "GET", path: "/orders"}` → `{allowed, version}`（Redis 缓存 60s，策略变更版本号自增自动失效；PDP 故障默认 fail-close）
 3. **前端菜单/按钮**：`GET /api/v1/me/menus?app=key`（按权限过滤的菜单树）与 `GET /api/v1/me/permissions?app=key`（权限码集合 + 版本号，可本地缓存）
 
+### 资源自助注册（内部集群接口）
+
+业务 app 在部署/启动时自助声明资源清单，无需管理员凭证：
+
+```bash
+# 创建 app 时响应里返回一次密钥（ahk_ 前缀，仅存 SHA-256 哈希；丢失用 rotate 重发）
+# POST /api/v1/admin/apps → { "secret": "ahk_..." }
+# POST /api/v1/admin/apps/{appKey}/secret/rotate 可随时轮换（旧密钥立即失效）
+
+PUT /internal/v1/apps/{appKey}/resources/batch?mode=replace
+X-App-Key: ahk_...
+{ "items": [ { "type": "api", "code": "order:read", "name": "查询订单", "method": "GET", "route_path": "/api/orders" } ] }
+```
+
+- 语义与 admin 批量导入一致：按 code 幂等 upsert、`parent_code` 前向解析、`mode=replace` 全量对账（未声明资源自动 disable 并摘除策略）；多副本并发注册安全
+- 校验链：app 存在 → 非 platform app → status=active → 密钥恒时比对；审计 actor 记 `app:{key}`
+- **部署约束**：`/internal/*` 必须不被公网 ingress 路由（NetworkPolicy 收口）——网络隔离是第一道防线，per-app 密钥是第二道
+
 ## 运维要点
 
 - **readiness**（`/ready`）= DB ping + Redis ping 双门槛；Redis 故障时实例退出 LB 池（denylist 默认 fail-close）

@@ -28,7 +28,7 @@ const RESOURCE_TYPES = ["menu", "api", "button"] as const;
  * Resources tab: the single-table resource tree (design.md §2.3) rendered as
  * an indented table, node create/edit (parent select), delete with the
  * children guard surfaced as a toast, and a JSON batch import
- * (PUT .../resources:batch, idempotent by code; ?mode=replace needs confirm).
+ * (PUT .../resources/batch, idempotent by code; ?mode=replace needs confirm).
  */
 export function ResourcesTab({ appKey }: { appKey: string }) {
   const toast = useToast();

@@ -27,7 +27,7 @@ export function Tabs({
   return (
     <div
       role="tablist"
-      className={`flex gap-1 overflow-x-auto border-b border-white/10 ${className}`}
+      className={`flex gap-1 overflow-x-auto border-b border-white/10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
     >
       {items.map((item) => {
         const isActive = item.key === active;

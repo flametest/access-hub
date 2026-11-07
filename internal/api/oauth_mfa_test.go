@@ -197,7 +197,7 @@ func (e *oauthEnv) createAppWithRole(key string) string {
 	if status != 201 {
 		e.t.Fatalf("create app: %d %v", status, body)
 	}
-	status, body = e.doJSON("PUT", "/api/v1/admin/apps/"+key+"/resources:batch", e.rootToken, map[string]any{
+	status, body = e.doJSON("PUT", "/api/v1/admin/apps/"+key+"/resources/batch", e.rootToken, map[string]any{
 		"items": []any{map[string]any{"type": "api", "code": "order:read", "name": "Read orders", "method": "GET", "route_path": "/api/orders"}},
 	})
 	if status != 200 {

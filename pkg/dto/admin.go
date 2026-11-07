@@ -56,6 +56,13 @@ type AppItem struct {
 	LogoURL     string    `json:"logo_url"`
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
+	// Secret is the per-app internal-API credential (header X-App-Key),
+	// populated ONLY in the create-app and secret-rotate responses: it is
+	// shown once and never retrievable again (only its hash is stored).
+	Secret string `json:"secret,omitempty"`
+	// SecretConfigured reports whether the app holds an internal-API secret
+	// (derived from the stored hash; never carries the plaintext).
+	SecretConfigured bool `json:"secret_configured"`
 }
 
 // CreateAppReq is the body of POST /api/v1/admin/apps. OrgKey is required
@@ -263,7 +270,7 @@ type UpdateResourceReq struct {
 	Status    *string `json:"status" validate:"omitempty,oneof=active disabled"`
 }
 
-// BatchResourceItem is one entry of PUT .../resources:batch.
+// BatchResourceItem is one entry of PUT .../resources/batch.
 type BatchResourceItem struct {
 	Code       string `json:"code" validate:"required,max=128"`
 	Name       string `json:"name" validate:"required,max=255"`
@@ -278,12 +285,12 @@ type BatchResourceItem struct {
 	Status     string `json:"status" validate:"omitempty,oneof=active disabled"`
 }
 
-// BatchResourcesReq is the body of PUT /api/v1/admin/apps/{appKey}/resources:batch.
+// BatchResourcesReq is the body of PUT /api/v1/admin/apps/{appKey}/resources/batch.
 type BatchResourcesReq struct {
 	Items []BatchResourceItem `json:"items" validate:"required,min=1,dive"`
 }
 
-// BatchResourcesResp is the response of PUT .../resources:batch.
+// BatchResourcesResp is the response of PUT .../resources/batch.
 type BatchResourcesResp struct {
 	Created  int `json:"created"`
 	Updated  int `json:"updated"`

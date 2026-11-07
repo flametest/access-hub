@@ -101,6 +101,12 @@ export const adminApi = {
   updateApp: (appKey: string, body: UpdateAppReq): Promise<AdminApp> =>
     request<AdminApp>(`/admin/apps/${enc(appKey)}`, { method: "PATCH", body }),
 
+  /** Issues a fresh internal-API secret; the old one stops working. */
+  rotateAppSecret: (appKey: string): Promise<AdminApp> =>
+    request<AdminApp>(`/admin/apps/${enc(appKey)}/secret/rotate`, {
+      method: "POST",
+    }),
+
   // ---------- users (primary identities) ----------
 
   listUsers: async (
@@ -262,7 +268,7 @@ export const adminApi = {
     mode: "" | "replace",
   ): Promise<BatchResourcesResp> =>
     request<BatchResourcesResp>(
-      `/admin/apps/${enc(appKey)}/resources:batch${mode ? `?mode=${enc(mode)}` : ""}`,
+      `/admin/apps/${enc(appKey)}/resources/batch${mode ? `?mode=${enc(mode)}` : ""}`,
       { method: "PUT", body: { items } },
     ).then((raw) => toBatchResourcesResp(raw)),
 

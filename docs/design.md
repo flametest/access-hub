@@ -204,6 +204,7 @@ M6 修订（7 元组 + 显式优先级 + ABAC 条件）：
   - `GET /api/v1/me/sessions`、`DELETE /api/v1/me/sessions/:id`、`DELETE /api/v1/me/sessions`
 - **邀请**：`POST /api/v1/invitations/redeem {code}`（主账号登录态）
 - **业务接入**：`POST /api/v1/authz/check`（method+path 反查唯一资源，反查不到即 deny）
+- **内部集群接口（资源自助注册）**：`PUT /internal/v1/apps/{appKey}/resources/batch?mode=replace`，业务 app 部署/启动时凭 per-app 密钥（header `X-App-Key`，`ahk_` 前缀）自助声明资源清单，语义与 admin 批量导入一致（幂等 upsert + parent_code 前向解析 + replace 全量对账）。密钥在创建 app 时签发一次（响应 `secret` 字段，仅存 SHA-256 哈希 `apps.secret_hash`），`POST /admin/apps/{appKey}/secret/rotate` 轮换即旧密钥失效。校验链：app 存在（404）→ 非 platform app（403，platform app 不发密钥）→ status=active（403）→ 恒时比对（401）；审计 actor=`app:{key}`（`internal_resource_synced` / `app_secret_created` / `app_secret_rotated`）。**部署约束：/internal/* 必须不被公网 ingress 路由——网络隔离是第一道防线，per-app 密钥是第二道（防 SSRF/横向移动），两层缺一不可**
 - **管理端（Casbin dom=admin + org 行级）**：orgs CRUD + org_members 治理；apps CRUD；users（主账号）列表/禁用/重置密码；**accounts（子账号）列表/禁用/重置密码/设角色/换绑主账号(transfer)**；invitations 创建/列表/撤销；resources 树 CRUD + `PUT .../resources:batch`（幂等导入）；roles CRUD + `PUT /roles/:id/resources`；account_grants 管理；`GET /admin/audit-logs`
 
 ## 9. 前端门户映射（login.html 原型 → API）

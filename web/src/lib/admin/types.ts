@@ -52,6 +52,13 @@ export interface AdminApp {
   description: string;
   status: string;
   created_at?: string;
+  /** Whether the app holds an internal-API secret (hash-derived flag). */
+  secret_configured?: boolean;
+  /**
+   * One-time plaintext of the internal-API secret — present ONLY in the
+   * create-app and rotate responses; never in list/get.
+   */
+  secret?: string;
 }
 
 export interface CreateAppReq {

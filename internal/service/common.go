@@ -59,6 +59,21 @@ func randomHex(nBytes int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// appSecretPrefix marks generated app internal-API secrets (secret scanning
+// in app repos).
+const appSecretPrefix = "ahk_"
+
+// newAppSecret generates a per-app internal-API secret: a 256-bit random hex
+// with a fixed prefix. It is returned to the admin exactly once at creation
+// or rotation; only its SHA-256 is persisted.
+func newAppSecret() (string, error) {
+	raw, err := randomToken()
+	if err != nil {
+		return "", err
+	}
+	return appSecretPrefix + raw, nil
+}
+
 // normalizeEmail trims and lower-cases an email address.
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
@@ -116,6 +131,10 @@ const (
 	AuditSocialLinked   = "social_linked"
 	AuditSocialRegister = "social_register"
 	AuditSocialUnlinked = "social_unlinked"
+	// Internal cluster API (per-app secret, resource self-registration).
+	AuditAppSecretCreated       = "app_secret_created"
+	AuditAppSecretRotated       = "app_secret_rotated"
+	AuditInternalResourceSynced = "internal_resource_synced"
 )
 
 // Actor types for audit_logs.actor_type.
@@ -123,6 +142,9 @@ const (
 	ActorIdentity = "identity"
 	ActorAccount  = "account"
 	ActorSystem   = "system"
+	// ActorApp marks a business app calling the internal cluster API with
+	// its own secret (the app as a first-class actor).
+	ActorApp = "app"
 )
 
 // writeAudit records a security-relevant event. Best-effort: failures are

@@ -6,15 +6,20 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"strings"
 
 	"errors"
 	"github.com/flametest/access-hub/internal/infra/kv"
+	"github.com/flametest/access-hub/internal/infra/repository"
 	log "github.com/flametest/vita/vlog"
 
 	"github.com/flametest/access-hub/internal/container"
 	"github.com/flametest/access-hub/internal/domain"
 	"github.com/flametest/access-hub/internal/infra/jwt"
+	"github.com/flametest/access-hub/internal/infra/model"
 	"github.com/flametest/vita/verrors"
 	"github.com/labstack/echo/v4"
 )
@@ -24,7 +29,12 @@ const (
 	ctxKeyClaims = "access_hub.claims"
 	ctxKeyAuth   = "access_hub.auth"
 	ctxKeyAdmin  = "access_hub.admin"
+	// ctxKeyApp stashes the app authenticated by RequireAppSecret.
+	ctxKeyApp = "access_hub.app"
 )
+
+// AppSecretHeader carries the per-app internal-API credential.
+const AppSecretHeader = "X-App-Key"
 
 // Token kinds (AuthContext.Kind).
 const (
@@ -260,6 +270,50 @@ func (m *AuthMiddleware) RequireAdmin(code string) echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+// RequireAppSecret guards the internal cluster API: the caller is a business
+// app authenticating with the per-app secret issued at app creation (header
+// X-App-Key, matched in constant time against the stored SHA-256 hash). Only
+// active, org-scoped apps may call it — platform apps never hold a secret and
+// disabled apps are rejected. The secret is the second line of defense:
+// deployments must also keep /internal/* unrouted by the public ingress.
+func (m *AuthMiddleware) RequireAppSecret() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			key := c.Request().Header.Get(AppSecretHeader)
+			if key == "" {
+				return verrors.UnauthorizedError("X-App-Key header required")
+			}
+			app, err := m.c.AppRepo().FindByKey(c.Request().Context(), c.Param("appKey"))
+			if err != nil {
+				if repository.IsNotFound(err) {
+					return verrors.NotFoundError("app not found")
+				}
+				return verrors.Wrap(err, "find app")
+			}
+			if app.OrgID == nil {
+				return verrors.ForbiddenError("platform apps do not expose the internal API")
+			}
+			if app.Status != domain.AppStatusActive {
+				return verrors.ForbiddenError("app is disabled")
+			}
+			sum := sha256.Sum256([]byte(key))
+			if app.SecretHash == nil ||
+				subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(*app.SecretHash)) != 1 {
+				return verrors.UnauthorizedError("invalid app key")
+			}
+			c.Set(ctxKeyApp, app)
+			return next(c)
+		}
+	}
+}
+
+// AppOf returns the app authenticated by RequireAppSecret (false outside
+// internal-API routes).
+func AppOf(c echo.Context) (*model.App, bool) {
+	app, ok := c.Get(ctxKeyApp).(*model.App)
+	return app, ok && app != nil
 }
 
 // buildAdminContext resolves the org row-level scope of the admin caller.

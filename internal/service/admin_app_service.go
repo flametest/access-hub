@@ -20,6 +20,9 @@ type AdminAppService interface {
 	Create(ctx context.Context, actor *AdminActor, req *dto.CreateAppReq) (*dto.AppItem, error)
 	Update(ctx context.Context, actor *AdminActor, appKey string, req *dto.UpdateAppReq) (*dto.AppItem, error)
 	Delete(ctx context.Context, actor *AdminActor, appKey string) error
+	// RotateSecret issues a fresh internal-API secret (X-App-Key), invalidating
+	// the previous one. The plaintext is returned once in the response.
+	RotateSecret(ctx context.Context, actor *AdminActor, appKey string) (*dto.AppItem, error)
 }
 
 type adminAppServiceImpl struct {
@@ -41,7 +44,8 @@ func (s *adminAppServiceImpl) toItem(ctx context.Context, app *model.App) *dto.A
 		Description: deref(app.Description),
 		LogoURL:     deref(app.LogoURL),
 		Status:      app.Status,
-		CreatedAt:   app.CreatedAt,
+		CreatedAt:    app.CreatedAt,
+		SecretConfigured: app.SecretHash != nil,
 	}
 	if app.OrgID != nil {
 		if org, err := s.c.OrgRepo().FindByID(ctx, *app.OrgID); err == nil {
@@ -129,6 +133,18 @@ func (s *adminAppServiceImpl) Create(ctx context.Context, actor *AdminActor, req
 		Type:         typ,
 		Status:       domain.AppStatusActive,
 	}
+	var secret string
+	if orgID != nil {
+		// Org-scoped apps get an internal-API secret so they can self-register
+		// their resources (PUT /internal/v1/...); platform apps don't.
+		s, err := newAppSecret()
+		if err != nil {
+			return nil, verrors.Wrap(err, "generate app secret")
+		}
+		secret = s
+		hash := sha256Hex(secret)
+		app.SecretHash = &hash
+	}
 	if req.Description != "" {
 		d := req.Description
 		app.Description = &d
@@ -140,7 +156,13 @@ func (s *adminAppServiceImpl) Create(ctx context.Context, actor *AdminActor, req
 	if err := s.c.AppRepo().Create(ctx, app); err != nil {
 		return nil, verrors.Wrap(err, "create app")
 	}
-	return s.toItem(ctx, app), nil
+	if secret != "" {
+		writeAudit(ctx, s.c, ActorIdentity, actor.IdentityID, app.OrgID, AuditAppSecretCreated, "app", app.Id,
+			map[string]any{"app_key": app.Key}, "", "")
+	}
+	item := s.toItem(ctx, app)
+	item.Secret = secret
+	return item, nil
 }
 
 func (s *adminAppServiceImpl) Update(ctx context.Context, actor *AdminActor, appKey string, req *dto.UpdateAppReq) (*dto.AppItem, error) {
@@ -188,4 +210,29 @@ func (s *adminAppServiceImpl) Delete(ctx context.Context, actor *AdminActor, app
 		return verrors.Wrap(err, "delete app")
 	}
 	return nil
+}
+
+// RotateSecret replaces the app's internal-API secret (the old one stops
+// working immediately) and returns the new plaintext exactly once.
+func (s *adminAppServiceImpl) RotateSecret(ctx context.Context, actor *AdminActor, appKey string) (*dto.AppItem, error) {
+	app, err := actor.accessibleApp(ctx, s.c, appKey)
+	if err != nil {
+		return nil, err
+	}
+	if app.OrgID == nil {
+		return nil, verrors.BadRequestError("platform apps have no internal API secret")
+	}
+	secret, err := newAppSecret()
+	if err != nil {
+		return nil, verrors.Wrap(err, "generate app secret")
+	}
+	hash := sha256Hex(secret)
+	if err := s.c.AppRepo().UpdateFields(ctx, app.Id, map[string]any{"secret_hash": hash}); err != nil {
+		return nil, verrors.Wrap(err, "rotate app secret")
+	}
+	writeAudit(ctx, s.c, ActorIdentity, actor.IdentityID, app.OrgID, AuditAppSecretRotated, "app", app.Id,
+		map[string]any{"app_key": app.Key}, "", "")
+	item := s.toItem(ctx, app)
+	item.Secret = secret
+	return item, nil
 }

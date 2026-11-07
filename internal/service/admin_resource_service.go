@@ -21,6 +21,9 @@ type AdminResourceService interface {
 	Update(ctx context.Context, actor *AdminActor, appKey, resourceID string, req *dto.UpdateResourceReq) (*dto.AdminResourceItem, error)
 	Delete(ctx context.Context, actor *AdminActor, appKey, resourceID string) error
 	Batch(ctx context.Context, actor *AdminActor, appKey string, req *dto.BatchResourcesReq, mode string) (*dto.BatchResourcesResp, error)
+	// InternalBatch is the cluster-internal registration path (X-App-Key):
+	// the caller IS the app, so no AdminActor/org checks apply.
+	InternalBatch(ctx context.Context, app *model.App, req *dto.BatchResourcesReq, mode string) (*dto.BatchResourcesResp, error)
 }
 
 type adminResourceServiceImpl struct {
@@ -322,6 +325,23 @@ func (s *adminResourceServiceImpl) Batch(ctx context.Context, actor *AdminActor,
 	if err != nil {
 		return nil, err
 	}
+	return s.batchForApp(ctx, app, req, mode)
+}
+
+// InternalBatch applies the same batch semantics on behalf of the app itself
+// (cluster-internal X-App-Key path) and audits with the app as the actor.
+func (s *adminResourceServiceImpl) InternalBatch(ctx context.Context, app *model.App, req *dto.BatchResourcesReq, mode string) (*dto.BatchResourcesResp, error) {
+	resp, err := s.batchForApp(ctx, app, req, mode)
+	if err != nil {
+		return nil, err
+	}
+	writeAudit(ctx, s.c, ActorApp, app.Key, app.OrgID, AuditInternalResourceSynced, "app", app.Id,
+		map[string]any{"app_key": app.Key, "mode": mode, "created": resp.Created, "updated": resp.Updated, "disabled": resp.Disabled}, "", "")
+	return resp, nil
+}
+
+// batchForApp is the shared upsert core of Batch and InternalBatch.
+func (s *adminResourceServiceImpl) batchForApp(ctx context.Context, app *model.App, req *dto.BatchResourcesReq, mode string) (*dto.BatchResourcesResp, error) {
 	resp := &dto.BatchResourcesResp{}
 
 	// Pass 1: upsert each item without its parent.

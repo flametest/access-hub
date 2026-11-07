@@ -22,7 +22,7 @@ func TestBatch3RoleResourcesReadAndAccountPaging(t *testing.T) {
 	if status != 201 && status != 200 {
 		t.Fatalf("app: %d %v", status, body)
 	}
-	status, body = env.doJSON("PUT", "/api/v1/admin/apps/b3app/resources:batch", root, map[string]any{"items": []any{
+	status, body = env.doJSON("PUT", "/api/v1/admin/apps/b3app/resources/batch", root, map[string]any{"items": []any{
 		map[string]any{"code": "r:one", "name": "One", "type": "api", "method": "GET", "route_path": "/one"},
 		map[string]any{"code": "r:two", "name": "Two", "type": "api", "method": "GET", "route_path": "/two"},
 	}})

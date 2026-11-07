@@ -15,7 +15,7 @@ func TestBatch4ReadCodesLeastPrivilege(t *testing.T) {
 	env.doJSON("POST", "/api/v1/admin/orgs", root, map[string]any{"key": "b4org", "name": "B4"})
 	env.doJSON("POST", "/api/v1/admin/apps", root, map[string]any{
 		"key": "b4app", "org_key": "b4org", "name": "B4 App", "type": "web"})
-	env.doJSON("PUT", "/api/v1/admin/apps/b4app/resources:batch", root, map[string]any{"items": []any{
+	env.doJSON("PUT", "/api/v1/admin/apps/b4app/resources/batch", root, map[string]any{"items": []any{
 		map[string]any{"code": "b4:r", "name": "R", "type": "api", "method": "GET", "route_path": "/r"},
 	}})
 

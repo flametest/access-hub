@@ -93,6 +93,10 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 	e.Add(http.MethodPost, "/api/v1/admin/apps", auth.RequireAdmin("admin:app:manage")(h.AdminCreateApp))
 	e.Add(http.MethodPatch, "/api/v1/admin/apps/:appKey", auth.RequireAdmin("admin:app:manage")(h.AdminUpdateApp))
 	e.Add(http.MethodDelete, "/api/v1/admin/apps/:appKey", auth.RequireAdmin("admin:app:manage")(h.AdminDeleteApp))
+	// "secret/rotate" and "resources/batch" coexist with the :param routes
+	// (e.g. resources/:resourceId) because Echo keeps a separate router tree
+	// per HTTP method and prefers static segments over params anyway.
+	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/secret/rotate", auth.RequireAdmin("admin:app:manage")(h.AdminRotateAppSecret))
 
 	e.Add(http.MethodGet, "/api/v1/admin/users", auth.RequireAdmin("admin:user:read")(h.AdminListUsers))
 	e.Add(http.MethodPatch, "/api/v1/admin/users/:userId", auth.RequireAdmin("admin:user:manage")(h.AdminUpdateUser))
@@ -116,9 +120,9 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/resources", auth.RequireAdmin("admin:resource:manage")(h.AdminCreateResource))
 	e.Add(http.MethodPatch, "/api/v1/admin/apps/:appKey/resources/:resourceId", auth.RequireAdmin("admin:resource:manage")(h.AdminUpdateResource))
 	e.Add(http.MethodDelete, "/api/v1/admin/apps/:appKey/resources/:resourceId", auth.RequireAdmin("admin:resource:manage")(h.AdminDeleteResource))
-	// The escaped colon keeps Echo from parsing "batch" as a path parameter
-	// (which would make this route match ANY /resources/* suffix).
-	e.Add(http.MethodPut, "/api/v1/admin/apps/:appKey/resources\\:batch", auth.RequireAdmin("admin:resource:manage")(h.AdminBatchResources))
+	// No PUT /resources/:resourceId exists, so the static /resources/batch
+	// (per-method tree) cannot be shadowed by a param route.
+	e.Add(http.MethodPut, "/api/v1/admin/apps/:appKey/resources/batch", auth.RequireAdmin("admin:resource:manage")(h.AdminBatchResources))
 
 	e.Add(http.MethodGet, "/api/v1/admin/apps/:appKey/roles", auth.RequireAdmin("admin:role:read")(h.AdminListRoles))
 	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/roles", auth.RequireAdmin("admin:role:manage")(h.AdminCreateRole))
@@ -154,6 +158,12 @@ func (a *App) Router(server vserver.Server) vserver.Server {
 	e.Add(http.MethodPost, "/api/v1/admin/apps/:appKey/oauth-clients", auth.RequireAdmin("admin:oauthclient:manage")(h.AdminCreateOAuthClient))
 	e.Add(http.MethodPatch, "/api/v1/admin/apps/:appKey/oauth-clients/:clientId", auth.RequireAdmin("admin:oauthclient:manage")(h.AdminUpdateOAuthClient))
 	e.Add(http.MethodDelete, "/api/v1/admin/apps/:appKey/oauth-clients/:clientId", auth.RequireAdmin("admin:oauthclient:manage")(h.AdminDeleteOAuthClient))
+
+	// ----- internal cluster API (business apps self-declare resources) -----
+	// Guarded by the per-app X-App-Key secret (RequireAppSecret); deployments
+	// must keep /internal/* unrouted by the public ingress — network isolation
+	// is the first line of defense, the secret the second.
+	e.Add(http.MethodPut, "/internal/v1/apps/:appKey/resources/batch", auth.RequireAppSecret()(h.InternalBatchResources))
 
 	return srv
 }

@@ -178,6 +178,21 @@ func (h *Handlers) AdminDeleteApp(c echo.Context) error {
 	return noContent(c)
 }
 
+// AdminRotateAppSecret handles POST /api/v1/admin/apps/{appKey}/secret/rotate.
+// Issues a fresh internal-API secret (the old one stops working) and returns
+// it exactly once.
+func (h *Handlers) AdminRotateAppSecret(c echo.Context) error {
+	actor, err := adminActor(c)
+	if err != nil {
+		return err
+	}
+	app, err := h.AdminApp.RotateSecret(c.Request().Context(), actor, c.Param("appKey"))
+	if err != nil {
+		return err
+	}
+	return okJSON(c, http.StatusOK, app)
+}
+
 // ---------- users ----------
 
 // AdminListUsers handles GET /api/v1/admin/users?q=&page=&page_size=.
@@ -489,7 +504,7 @@ func (h *Handlers) AdminDeleteResource(c echo.Context) error {
 	return noContent(c)
 }
 
-// AdminBatchResources handles PUT /api/v1/admin/apps/{appKey}/resources:batch.
+// AdminBatchResources handles PUT /api/v1/admin/apps/{appKey}/resources/batch.
 func (h *Handlers) AdminBatchResources(c echo.Context) error {
 	actor, err := adminActor(c)
 	if err != nil {

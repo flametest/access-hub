@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { AppSecretDialog } from "@/components/admin/app-secret-dialog";
 import { Button } from "@/components/button";
 import { StatusChip } from "@/components/chips";
 import { Dialog } from "@/components/dialog";
@@ -49,6 +50,8 @@ export default function AdminAppsPage() {
     description: "",
   });
   const [createError, setCreateError] = useState<string | null>(null);
+  // One-time reveal of the internal-API secret returned by create/rotate.
+  const [revealedSecret, setRevealedSecret] = useState<{ key: string; secret: string } | null>(null);
 
   const [editing, setEditing] = useState<AdminApp | null>(null);
   const [editForm, setEditForm] = useState({ name: "", description: "", status: "active" });
@@ -71,6 +74,9 @@ export default function AdminAppsPage() {
       setCreating(false);
       setForm({ key: "", org_key: "", name: "", type: "web", description: "" });
       setCreateError(null);
+      if (app.secret) {
+        setRevealedSecret({ key: app.key, secret: app.secret });
+      }
       void invalidateApps();
     },
     onError: (err) => setCreateError(errMessage(err, "Could not create the app.")),
@@ -302,6 +308,15 @@ export default function AdminAppsPage() {
             </div>
           </form>
         </Dialog>
+      )}
+
+      {/* One-time internal-API secret reveal (create/rotate responses) */}
+      {revealedSecret && (
+        <AppSecretDialog
+          appKey={revealedSecret.key}
+          secret={revealedSecret.secret}
+          onClose={() => setRevealedSecret(null)}
+        />
       )}
 
       {/* Edit dialog */}

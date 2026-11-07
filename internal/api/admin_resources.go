@@ -46,6 +46,7 @@ func AdminResourceDefs() []AdminResourceDef {
 		{Code: "admin:app:manage", Method: "POST", Path: "/api/v1/admin/apps", Name: "Create app"},
 		{Code: "admin:app:manage", Method: "PATCH", Path: "/api/v1/admin/apps/{appKey}", Name: "Update app"},
 		{Code: "admin:app:manage", Method: "DELETE", Path: "/api/v1/admin/apps/{appKey}", Name: "Delete app"},
+		{Code: "admin:app:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/secret/rotate", Name: "Rotate app secret"},
 		// users (identities, platform-only)
 		{Code: "admin:user:read", Method: "GET", Path: "/api/v1/admin/users", Name: "List users"},
 		{Code: "admin:user:manage", Method: "PATCH", Path: "/api/v1/admin/users/{userId}", Name: "Update user"},
@@ -69,7 +70,7 @@ func AdminResourceDefs() []AdminResourceDef {
 		{Code: "admin:resource:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/resources", Name: "Create resource"},
 		{Code: "admin:resource:manage", Method: "PATCH", Path: "/api/v1/admin/apps/{appKey}/resources/{resourceId}", Name: "Update resource"},
 		{Code: "admin:resource:manage", Method: "DELETE", Path: "/api/v1/admin/apps/{appKey}/resources/{resourceId}", Name: "Delete resource"},
-		{Code: "admin:resource:manage", Method: "PUT", Path: "/api/v1/admin/apps/{appKey}/resources:batch", Name: "Batch import resources"},
+		{Code: "admin:resource:manage", Method: "PUT", Path: "/api/v1/admin/apps/{appKey}/resources/batch", Name: "Batch import resources"},
 		// roles
 		{Code: "admin:role:read", Method: "GET", Path: "/api/v1/admin/apps/{appKey}/roles", Name: "List roles"},
 		{Code: "admin:role:manage", Method: "POST", Path: "/api/v1/admin/apps/{appKey}/roles", Name: "Create role"},

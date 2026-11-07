@@ -84,12 +84,13 @@ frontend never needs a separate admin session.
 | `/admin/orgs` | org table + create/edit + per-org members drawer (add/remove, guard errors surfaced) | `GET/POST/PATCH /admin/orgs`, `GET/POST/DELETE /admin/orgs/{key}/members` |
 | `/admin/apps` | app table + create/edit/disable | `GET/POST/PATCH /admin/apps` |
 | `/admin/apps/{appKey}` | tabbed detail (tab in `?tab=`) | — |
-| ↳ Resources | tree table (indent by depth, type chips, method+route), node create/edit (parent select), delete (children guard toast), JSON batch import panel with item count + `?mode=replace` double-confirm | `GET/POST/PATCH/DELETE .../resources`, `PUT .../resources:batch` |
+| ↳ Resources | tree table (indent by depth, type chips, method+route), node create/edit (parent select), delete (children guard toast), JSON batch import panel with item count + `?mode=replace` double-confirm | `GET/POST/PATCH/DELETE .../resources`, `PUT .../resources/batch` |
 | ↳ Roles | CRUD (built-in protected) + "bind resources" drawer: tree grouped by type with checkboxes and per-item allow/deny, submitted as `items:[{resource_id, effect}]` | `GET/POST/PATCH/DELETE .../roles`, `PUT .../roles/{id}/resources` |
 | ↳ Accounts | provision (empty password → activation email note), enable/disable, reset password, transfer, set roles, direct-grants drawer (resource + optional expiry + effect) | `GET/POST .../accounts`, `PATCH .../accounts/{id}`, `POST .../accounts/{id}/reset-password` / `transfer`, `PUT .../accounts/{id}/roles`, `GET/POST/DELETE .../accounts/{id}/grants` |
 | ↳ Invitations | list + create (email, roles, ttl_hours) + revoke | `GET/POST .../invitations`, `POST .../invitations/{id}/revoke` |
 | ↳ OAuth clients | list + create/edit/delete; plaintext **secret shown exactly once** in a copyable callout (only its hash is stored) | `GET/POST .../oauth-clients`, `PATCH/DELETE .../oauth-clients/{clientId}` |
 | ↳ Custom rules (M6) | expr rules (name/effect chip/priority/status) + create/edit form (invalid expr → backend 1400 message inline) + inline test panel (`obj`/`act` → allowed/denied result chip; dry-run, never saves) | `GET/POST/PATCH/DELETE .../custom-rules`, `POST .../custom-rules/test` |
+| ↳ Integration | internal-API secret status chip (configured / not / platform) + issue/rotate via one-time reveal dialog with copy (plaintext never retrievable; hash-only server-side), endpoint snippet | `POST .../secret/rotate` |
 | `/admin/users` | primary identities: search `?q=`, server-paged table, disable/enable, reset password | `GET /admin/users`, `PATCH /admin/users/{id}`, `POST /admin/users/{id}/reset-password` |
 | `/admin/audit` | summary strip (reuse) + action/org_key filters + server-paged table with pretty-printed detail jsonb in expandable rows (IP/UA shown) | `GET /admin/audit-logs`, `GET /admin/audit-logs/summary` |
 
