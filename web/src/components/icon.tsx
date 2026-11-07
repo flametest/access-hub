@@ -33,6 +33,8 @@ const PATHS = {
     </>
   ),
   "chevron-right": <path d="m9 5 6 7-6 7" />,
+  "chevron-down": <path d="m5 9 7 7 7-7" />,
+  check: <path d="m5 12.5 4.7 4.7L19 7.5" />,
   "check-circle": (
     <>
       <circle cx="12" cy="12" r="8.5" />
