@@ -214,6 +214,14 @@ type AdminInvitationItem struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
+// AdminInvitationPage is the response of GET /api/v1/admin/apps/{appKey}/invitations.
+type AdminInvitationPage struct {
+	Items    []AdminInvitationItem `json:"items"`
+	Total    int                   `json:"total"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"page_size"`
+}
+
 // CreateInvitationReq is the body of POST /api/v1/admin/apps/{appKey}/invitations.
 type CreateInvitationReq struct {
 	Email    string   `json:"email" validate:"required,email,max=255"`

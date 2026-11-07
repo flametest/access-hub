@@ -282,6 +282,19 @@ export function toAdminInvitations(raw: unknown): AdminInvitation[] {
   return pickList(raw, ["invitations", "items", "data"]).map(toAdminInvitation);
 }
 
+export function toAdminInvitationPage(raw: unknown): Paged<AdminInvitation> {
+  const r = asRecord(raw);
+  const items = pickList(raw, ["items", "invitations", "data"]).map(
+    toAdminInvitation,
+  );
+  return {
+    items,
+    total: num(r.total, items.length),
+    page: num(r.page, 1) || 1,
+    page_size: num(r.page_size, 20) || 20,
+  };
+}
+
 // ---------- oauth clients ----------
 
 export function toOAuthClient(raw: unknown): OAuthClient {

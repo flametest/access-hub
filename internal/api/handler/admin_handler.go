@@ -415,17 +415,19 @@ func (h *Handlers) AdminCreateInvitation(c echo.Context) error {
 	return okJSON(c, http.StatusCreated, item)
 }
 
-// AdminListInvitations handles GET /api/v1/admin/apps/{appKey}/invitations?status=.
+// AdminListInvitations handles GET /api/v1/admin/apps/{appKey}/invitations?status=&page=&page_size=.
 func (h *Handlers) AdminListInvitations(c echo.Context) error {
 	actor, err := adminActor(c)
 	if err != nil {
 		return err
 	}
-	items, err := h.AdminInv.List(c.Request().Context(), actor, c.Param("appKey"), c.QueryParam("status"))
+	page, _ := strconv.Atoi(c.QueryParam("page"))
+	pageSize, _ := strconv.Atoi(c.QueryParam("page_size"))
+	resp, err := h.AdminInv.List(c.Request().Context(), actor, c.Param("appKey"), c.QueryParam("status"), page, pageSize)
 	if err != nil {
 		return err
 	}
-	return okJSON(c, http.StatusOK, items)
+	return okJSON(c, http.StatusOK, resp)
 }
 
 // AdminRevokeInvitation handles POST .../invitations/{invitationId}/revoke.

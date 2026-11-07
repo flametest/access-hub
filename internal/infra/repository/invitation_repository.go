@@ -19,7 +19,11 @@ type InvitationRepo interface {
 	// status=pending and not-yet-expired invitations match; anything else
 	// surfaces as NotFoundError.
 	FindByCodeHash(ctx context.Context, codeHash string) (*model.Invitation, error)
-	ListByApp(ctx context.Context, appID string) ([]*model.Invitation, error)
+	// ListByAppPaged is the paginated admin list (status nil = all);
+	// deterministic created_at DESC order with LIMIT/OFFSET.
+	ListByAppPaged(ctx context.Context, appID string, status *string, offset, limit int) ([]*model.Invitation, error)
+	// CountByApp counts the rows ListByAppPaged would return.
+	CountByApp(ctx context.Context, appID string, status *string) (int64, error)
 	// ListPendingByEmail returns pending, unexpired invitations for an email
 	// (the social-login "found N workspaces" moment, design.md §12 M5).
 	ListPendingByEmail(ctx context.Context, email string) ([]*model.Invitation, error)
@@ -57,13 +61,24 @@ func (r *invitationRepoImpl) FindByCodeHash(ctx context.Context, codeHash string
 	return &invitation, nil
 }
 
-func (r *invitationRepoImpl) ListByApp(ctx context.Context, appID string) ([]*model.Invitation, error) {
+func (r *invitationRepoImpl) ListByAppPaged(ctx context.Context, appID string, status *string, offset, limit int) ([]*model.Invitation, error) {
+	q := r.db.WithContext(ctx).Where("app_id = ?", appID)
+	if status != nil && *status != "" {
+		q = q.Where("status = ?", *status)
+	}
 	var out []*model.Invitation
-	err := r.db.WithContext(ctx).
-		Where("app_id = ?", appID).
-		Order("created_at DESC").
-		Find(&out).Error
+	err := q.Order("created_at DESC").Offset(offset).Limit(limit).Find(&out).Error
 	return out, err
+}
+
+func (r *invitationRepoImpl) CountByApp(ctx context.Context, appID string, status *string) (int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.Invitation{}).Where("app_id = ?", appID)
+	if status != nil && *status != "" {
+		q = q.Where("status = ?", *status)
+	}
+	var count int64
+	err := q.Count(&count).Error
+	return count, err
 }
 
 func (r *invitationRepoImpl) ListPendingByEmail(ctx context.Context, email string) ([]*model.Invitation, error) {

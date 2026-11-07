@@ -1,8 +1,8 @@
 import { request } from "@/lib/api";
 import {
   toAdminAccountPage,
+  toAdminInvitationPage,
   toAdminApps,
-  toAdminInvitations,
   toAdminRoles,
   toAdminUserPage,
   toAuditLogPage,
@@ -336,9 +336,16 @@ export const adminApi = {
 
   // ---------- invitations ----------
 
-  listInvitations: async (appKey: string): Promise<AdminInvitation[]> =>
-    toAdminInvitations(
-      await request<unknown>(`/admin/apps/${enc(appKey)}/invitations`),
+  listInvitations: async (
+    appKey: string,
+    status: string,
+    page: number,
+    pageSize: number,
+  ): Promise<Paged<AdminInvitation>> =>
+    toAdminInvitationPage(
+      await request<unknown>(
+        `/admin/apps/${enc(appKey)}/invitations?status=${enc(status)}&page=${page}&page_size=${pageSize}`,
+      ),
     ),
 
   createInvitation: (

@@ -20,7 +20,7 @@ const defaultInvitationTTL = 72 * time.Hour
 // AdminInvitationService manages app invitations.
 type AdminInvitationService interface {
 	Create(ctx context.Context, actor *AdminActor, appKey string, req *dto.CreateInvitationReq) (*dto.AdminInvitationItem, error)
-	List(ctx context.Context, actor *AdminActor, appKey, status string) ([]dto.AdminInvitationItem, error)
+	List(ctx context.Context, actor *AdminActor, appKey, status string, page, pageSize int) (*dto.AdminInvitationPage, error)
 	Revoke(ctx context.Context, actor *AdminActor, appKey, invitationID string) error
 }
 
@@ -139,23 +139,39 @@ func roleIDsJSON(ids []string) []byte {
 	return raw
 }
 
-func (s *adminInvitationServiceImpl) List(ctx context.Context, actor *AdminActor, appKey, status string) ([]dto.AdminInvitationItem, error) {
+// List returns the app's invitations, status-filtered and paginated
+// (invitations accumulate forever — accepted/revoked/expired rows stay).
+func (s *adminInvitationServiceImpl) List(ctx context.Context, actor *AdminActor, appKey, status string, page, pageSize int) (*dto.AdminInvitationPage, error) {
 	app, err := actor.accessibleApp(ctx, s.c, appKey)
 	if err != nil {
 		return nil, err
 	}
-	invitations, err := s.c.InvitationRepo().ListByApp(ctx, app.Id)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	var statusPtr *string
+	if status != "" {
+		statusPtr = &status
+	}
+	total, err := s.c.InvitationRepo().CountByApp(ctx, app.Id, statusPtr)
+	if err != nil {
+		return nil, verrors.Wrap(err, "count invitations")
+	}
+	invitations, err := s.c.InvitationRepo().ListByAppPaged(ctx, app.Id, statusPtr, (page-1)*pageSize, pageSize)
 	if err != nil {
 		return nil, verrors.Wrap(err, "list invitations")
 	}
-	out := make([]dto.AdminInvitationItem, 0, len(invitations))
+	items := make([]dto.AdminInvitationItem, 0, len(invitations))
 	for _, invitation := range invitations {
-		if status != "" && invitation.Status != status {
-			continue
-		}
-		out = append(out, s.toItem(invitation))
+		items = append(items, s.toItem(invitation))
 	}
-	return out, nil
+	return &dto.AdminInvitationPage{Items: items, Total: int(total), Page: page, PageSize: pageSize}, nil
 }
 
 func (s *adminInvitationServiceImpl) Revoke(ctx context.Context, actor *AdminActor, appKey, invitationID string) error {

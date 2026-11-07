@@ -7,7 +7,7 @@ import { StatusChip } from "@/components/chips";
 import { ConfirmButton } from "@/components/confirm-button";
 import { Dialog } from "@/components/dialog";
 import { Field } from "@/components/field";
-import { CheckboxList } from "@/components/form-fields";
+import { CheckboxList, Select } from "@/components/form-fields";
 import { Icon } from "@/components/icon";
 import {
   EmptyCard,
@@ -21,23 +21,39 @@ import type { AdminInvitation } from "@/lib/admin/types";
 import { errMessage, isForbidden } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
+const PAGE_SIZE = 20;
+
+const STATUS_FILTERS = [
+  { value: "", label: "All statuses" },
+  { value: "pending", label: "Pending" },
+  { value: "accepted", label: "Accepted" },
+  { value: "revoked", label: "Revoked" },
+  { value: "expired", label: "Expired" },
+] as const;
+
 /**
  * Invitations tab: email invites into this app with role sets and a TTL.
- * Revoking a pending invite is a two-step confirm.
+ * Invitations accumulate forever, so the list is status-filtered and
+ * server-paginated. Revoking a pending invite is a two-step confirm.
  */
 export function InvitationsTab({ appKey }: { appKey: string }) {
   const toast = useToast();
   const queryClient = useQueryClient();
 
+  const [statusFilter, setStatusFilter] = useState("");
+  const [page, setPage] = useState(1);
   const invitationsQuery = useQuery({
-    queryKey: ["admin", "invitations", appKey],
-    queryFn: () => adminApi.listInvitations(appKey),
+    queryKey: ["admin", "invitations", appKey, statusFilter, page],
+    queryFn: () => adminApi.listInvitations(appKey, statusFilter, page, PAGE_SIZE),
   });
   const rolesQuery = useQuery({
     queryKey: ["admin", "roles", appKey],
     queryFn: () => adminApi.listRoles(appKey),
   });
   const roles = rolesQuery.data ?? [];
+  const invitations = invitationsQuery.data?.items ?? [];
+  const total = invitationsQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const [creating, setCreating] = useState(false);
   const [email, setEmail] = useState("");
@@ -92,9 +108,26 @@ export function InvitationsTab({ appKey }: { appKey: string }) {
           Invited people get a one-time code by email; accepting provisions
           their workspace account with the chosen roles.
         </p>
-        <Button size="sm" onClick={() => setCreating(true)}>
-          <Icon name="plus" className="size-4" /> Invite
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select
+            aria-label="Filter by status"
+            value={statusFilter}
+            onChange={(event) => {
+              setStatusFilter(event.target.value);
+              setPage(1);
+            }}
+            className="flex cursor-pointer items-center justify-between gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-2 text-[13px] text-white transition-colors focus:outline-none focus:ring-2 focus:ring-ah-accent/30"
+          >
+            {STATUS_FILTERS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+          <Button size="sm" onClick={() => setCreating(true)}>
+            <Icon name="plus" className="size-4" /> Invite
+          </Button>
+        </div>
       </div>
 
       <div className="mt-4">
@@ -105,14 +138,18 @@ export function InvitationsTab({ appKey }: { appKey: string }) {
             onRetry={() => invitationsQuery.refetch()}
           />
         )}
-        {invitationsQuery.data && invitationsQuery.data.length === 0 && (
+        {invitationsQuery.data && invitations.length === 0 && (
           <EmptyCard
             icon="ticket"
-            title="No invitations yet"
-            description="Invite someone by email with a role set and an expiry window."
+            title={statusFilter ? "No matching invitations" : "No invitations yet"}
+            description={
+              statusFilter
+                ? "Try a different status filter."
+                : "Invite someone by email with a role set and an expiry window."
+            }
           />
         )}
-        {invitationsQuery.data && invitationsQuery.data.length > 0 && (
+        {invitationsQuery.data && invitations.length > 0 && (
           <Table
             columns={[
               { key: "email", header: "Email", className: "font-mono text-[13px]" },
@@ -121,7 +158,7 @@ export function InvitationsTab({ appKey }: { appKey: string }) {
               { key: "expires", header: "Expires" },
               { key: "actions", header: "", className: "text-right" },
             ]}
-            rows={invitationsQuery.data}
+            rows={invitations}
             rowKey={(invitation) => invitation.id}
             cell={(invitation, column) => {
               switch (column.key) {
@@ -162,6 +199,31 @@ export function InvitationsTab({ appKey }: { appKey: string }) {
               }
             }}
           />
+        )}
+        {total > PAGE_SIZE && (
+          <div className="mt-3 flex items-center justify-between text-[13px] text-white/60">
+            <span>
+              page {page} of {totalPages} · {total} invitations
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         )}
       </div>
 
