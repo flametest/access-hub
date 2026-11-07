@@ -44,6 +44,15 @@ export interface SelectFieldProps
   children: ReactNode;
 }
 
+export interface SelectProps
+  extends Omit<SelectHTMLAttributes<HTMLSelectElement>, "children"> {
+  children: ReactNode;
+  /** Trigger button classes; omit for the standard field look. */
+  className?: string;
+  /** Red border/ring variant (wired through by SelectField). */
+  error?: string | null;
+}
+
 interface SelectOption {
   value: string;
   label: string;
@@ -81,6 +90,10 @@ function parseOptions(children: ReactNode): SelectOption[] {
   return options;
 }
 
+function fieldTriggerClasses(error?: string | null): string {
+  return `flex cursor-pointer items-center justify-between gap-2 text-left ${controlClasses(error)}`;
+}
+
 type PopupPos = {
   left: number;
   width: number;
@@ -92,28 +105,27 @@ type PopupPos = {
 const POPUP_MAX_HEIGHT = 288;
 
 /**
- * Custom listbox select. The native <select> dropdown popup is rendered by the
- * browser outside the page: recent Chromium builds on Windows (fluent-style
- * popup) paint it light and ignore both page color-scheme and option CSS,
- * which left options white-on-white in this dark UI. So the popup is DOM
+ * Custom listbox select (bare control — SelectField is the labelled form
+ * wrapper). The native <select> dropdown popup is painted by the browser
+ * outside the page: recent Chromium builds on Windows (fluent-style popup)
+ * render it light and ignore both page color-scheme and option CSS, which
+ * left the options white-on-white in this dark UI. So the popup is DOM
  * instead: a button trigger + a portal-rendered, fully page-styled list.
  *
- * The public API matches the previous native select (children = <option>
- * elements, onChange receives { target: { value } }) so call sites are
- * unchanged.
+ * The API matches the native select (children = <option> elements, onChange
+ * receives { target: { value } }) so call sites are unchanged.
  */
-export function SelectField({
-  label,
-  error,
-  hint,
-  id,
-  className = "",
+export function Select({
   children,
   value,
   onChange,
   disabled,
   name,
-}: SelectFieldProps) {
+  id,
+  className,
+  error,
+  "aria-label": ariaLabel,
+}: SelectProps) {
   const autoId = useId();
   const inputId = id ?? autoId;
   const listId = `${inputId}-listbox`;
@@ -177,6 +189,9 @@ export function SelectField({
   useEffect(() => {
     if (!open) return;
 
+    // The ref object is stable, but capture the state once for the cleanup.
+    const typeaheadState = typeahead.current;
+
     // Document-level (capture) so it also works when focus leaves the trigger,
     // and so Escape can be swallowed before the Dialog/Drawer sees it.
     const onKeyDown = (event: KeyboardEvent) => {
@@ -220,21 +235,27 @@ export function SelectField({
         }
         case "End": {
           event.preventDefault();
-          setActiveIndex(options.length - 1 - [...options].reverse().findIndex((o) => !o.disabled));
+          setActiveIndex(
+            options.length - 1 - [...options].reverse().findIndex((o) => !o.disabled),
+          );
           return;
         }
         default: {
           // Type-ahead: jump to the next option whose label starts with the
           // buffered characters (cleared after a short pause).
-          if (event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          if (
+            event.key.length === 1 &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey
+          ) {
             event.preventDefault();
-            const state = typeahead.current;
-            if (state.timer) clearTimeout(state.timer);
-            state.buffer += event.key.toLowerCase();
-            state.timer = setTimeout(() => {
-              state.buffer = "";
+            if (typeaheadState.timer) clearTimeout(typeaheadState.timer);
+            typeaheadState.buffer += event.key.toLowerCase();
+            typeaheadState.timer = setTimeout(() => {
+              typeaheadState.buffer = "";
             }, 450);
-            const query = state.buffer;
+            const query = typeaheadState.buffer;
             const matches = (option: SelectOption) =>
               !option.disabled && option.label.toLowerCase().startsWith(query);
             const after = options.findIndex(
@@ -250,7 +271,10 @@ export function SelectField({
 
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (triggerRef.current?.contains(target) || listRef.current?.contains(target)) {
+      if (
+        triggerRef.current?.contains(target) ||
+        listRef.current?.contains(target)
+      ) {
         return;
       }
       setOpen(false);
@@ -268,9 +292,8 @@ export function SelectField({
       document.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("scroll", onReposition, true);
       window.removeEventListener("resize", onReposition);
-      const state = typeahead.current;
-      if (state.timer) clearTimeout(state.timer);
-      state.buffer = "";
+      if (typeaheadState.timer) clearTimeout(typeaheadState.timer);
+      typeaheadState.buffer = "";
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, options, activeIndex, computePos]);
@@ -282,10 +305,7 @@ export function SelectField({
   }, [open, activeIndex]);
 
   return (
-    <div className={className}>
-      <label htmlFor={inputId} className={labelClasses()}>
-        {label}
-      </label>
+    <>
       <button
         ref={triggerRef}
         id={inputId}
@@ -294,7 +314,7 @@ export function SelectField({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        aria-invalid={error ? true : undefined}
+        aria-label={ariaLabel}
         aria-activedescendant={
           open && activeIndex >= 0 ? `${listId}-opt-${activeIndex}` : undefined
         }
@@ -306,7 +326,7 @@ export function SelectField({
             openList();
           }
         }}
-        className={`flex cursor-pointer items-center justify-between gap-2 text-left ${controlClasses(error)}`}
+        className={className ?? fieldTriggerClasses(error)}
       >
         <span className={`truncate ${selected ? "" : "text-white/30"}`}>
           {selected ? selected.label : valueText || "Select…"}
@@ -316,12 +336,6 @@ export function SelectField({
           className={`size-4 flex-none text-white/50 transition-transform ${open ? "rotate-180" : ""}`}
         />
       </button>
-      {hint && !error && <p className="mt-1.5 text-xs text-white/45">{hint}</p>}
-      {error && (
-        <p role="alert" className="mt-1.5 text-xs text-[#FF9C86]">
-          {error}
-        </p>
-      )}
 
       {open &&
         pos &&
@@ -330,12 +344,13 @@ export function SelectField({
             ref={listRef}
             id={listId}
             role="listbox"
-            aria-label={label}
+            aria-label={ariaLabel}
             className="z-[70] overflow-y-auto rounded-xl border border-white/10 bg-[#0B4343] py-1.5 shadow-[0_16px_40px_-8px_rgba(0,0,0,0.65)]"
             style={{
               position: "fixed",
               left: pos.left,
-              width: pos.width,
+              minWidth: pos.width,
+              maxWidth: `calc(100vw - ${Math.round(pos.left)}px - 8px)`,
               maxHeight: pos.maxHeight,
               top: pos.top,
               bottom: pos.bottom,
@@ -368,7 +383,10 @@ export function SelectField({
                 >
                   <span className="min-w-0 flex-1 truncate">{option.label}</span>
                   {isSelected && (
-                    <Icon name="check" className="size-4 flex-none text-ah-accent" />
+                    <Icon
+                      name="check"
+                      className="size-4 flex-none text-ah-accent"
+                    />
                   )}
                 </button>
               );
@@ -376,6 +394,35 @@ export function SelectField({
           </div>,
           document.body,
         )}
+    </>
+  );
+}
+
+export function SelectField({
+  label,
+  error,
+  hint,
+  id,
+  className = "",
+  children,
+  ...rest
+}: SelectFieldProps) {
+  const autoId = useId();
+  const inputId = id ?? autoId;
+  return (
+    <div className={className}>
+      <label htmlFor={inputId} className={labelClasses()}>
+        {label}
+      </label>
+      <Select id={inputId} error={error} aria-label={label} {...rest}>
+        {children}
+      </Select>
+      {hint && !error && <p className="mt-1.5 text-xs text-white/45">{hint}</p>}
+      {error && (
+        <p role="alert" className="mt-1.5 text-xs text-[#FF9C86]">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

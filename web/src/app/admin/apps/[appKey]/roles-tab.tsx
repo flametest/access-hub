@@ -9,7 +9,7 @@ import { ConfirmButton } from "@/components/confirm-button";
 import { Dialog } from "@/components/dialog";
 import { Drawer } from "@/components/drawer";
 import { Field } from "@/components/field";
-import { SelectField } from "@/components/form-fields";
+import { Select, SelectField } from "@/components/form-fields";
 import { EffectChip, ResourceTypeChip } from "@/components/admin/chips";
 import { Icon } from "@/components/icon";
 import {
@@ -448,17 +448,17 @@ function BindResourcesDrawer({
                   </label>
                   {checked ? (
                     <div className="flex flex-none items-center gap-2">
-                      <select
+                      <Select
                         value={selection[row.id]}
                         onChange={(event) =>
                           setEffect(row.id, event.target.value as Effect)
                         }
                         aria-label={`Effect for ${row.code}`}
-                        className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-ah-accent/30"
+                        className="flex cursor-pointer items-center justify-between gap-1.5 rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-xs font-bold text-white transition-colors focus:outline-none focus:ring-2 focus:ring-ah-accent/30"
                       >
                         <option value="allow">allow</option>
                         <option value="deny">deny</option>
-                      </select>
+                      </Select>
                       <EffectChip effect={selection[row.id]} />
                     </div>
                   ) : (
