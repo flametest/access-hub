@@ -334,6 +334,7 @@ export function ResourcesTab({ appKey }: { appKey: string }) {
         )}
         {treeQuery.data && rows.length > 0 && (
           <Table
+            minWidth={false}
             columns={[
               { key: "name", header: "Name", className: "min-w-[220px]" },
               { key: "code", header: "Code", className: "font-mono text-[13px]" },
@@ -362,17 +363,19 @@ export function ResourcesTab({ appKey }: { appKey: string }) {
                     </div>
                   );
                 case "code":
-                  return <span className="text-white/70">{row.code}</span>;
+                  return (
+                    <span className="wrap-anywhere text-white/70">{row.code}</span>
+                  );
                 case "route":
                   if (row.type === "api") {
                     return (
-                      <span className="font-mono text-[13px] text-white/70">
+                      <span className="wrap-anywhere font-mono text-[13px] text-white/70">
                         {row.method || "?"} {row.route_path || "—"}
                       </span>
                     );
                   }
                   return (
-                    <span className="font-mono text-[13px] text-white/45">
+                    <span className="wrap-anywhere font-mono text-[13px] text-white/45">
                       {row.path || "—"}
                     </span>
                   );

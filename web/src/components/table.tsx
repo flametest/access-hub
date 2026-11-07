@@ -22,6 +22,7 @@ export function Table<T>({
   onRowClick,
   expandable,
   className = "",
+  minWidth = true,
 }: {
   columns: TableColumn[];
   rows: T[];
@@ -31,12 +32,20 @@ export function Table<T>({
   /** Renders the full-width detail row directly under a row when it returns content. */
   expandable?: (row: T) => ReactNode;
   className?: string;
+  /**
+   * min-w-max keeps every column at its natural width (horizontal scroll on
+   * overflow). Set false on content-heavy tables whose long cells opt into
+   * wrap-anywhere, so the table fits the container instead of scrolling.
+   */
+  minWidth?: boolean;
 }) {
   return (
     <div
       className={`overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.06] shadow-[0_12px_24px_-8px_rgba(0,0,0,0.35)] ${className}`}
     >
-      <table className="w-full min-w-max border-collapse text-sm">
+      <table
+        className={`w-full border-collapse text-sm ${minWidth ? "min-w-max" : ""}`}
+      >
         <thead>
           <tr>
             {columns.map((column) => (
