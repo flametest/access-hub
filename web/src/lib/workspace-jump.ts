@@ -16,6 +16,12 @@ import type { Workspace } from "@/lib/types";
 export async function jumpToWorkspaceApp(
   ws: Workspace,
 ): Promise<string | null> {
+  // The admin console is the portal itself (bootstrap.PlatformAdminAppKey):
+  // its "app" is the /admin section, reached by internal navigation — the
+  // admin pages ride the portal identity token, no app token or OIDC needed.
+  if (ws.app_key === "admin") {
+    return "/admin";
+  }
   if (ws.sso_ready && ws.oauth_client_id && ws.redirect_uri) {
     const redirectTo = await api.authorizeWorkspace(
       ws.account_id,
