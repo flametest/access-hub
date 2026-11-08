@@ -48,6 +48,14 @@ type WorkspaceItem struct {
 	Status      string        `json:"status"`
 	Roles       []RoleSummary `json:"roles"`
 	LastLoginAt *time.Time    `json:"last_login_at"`
+	// Portal-initiated SSO jump ("Open" → the app's OIDC code flow):
+	// populated when the app has an ACTIVE CONFIDENTIAL client registered
+	// with the authorization_code grant (its first redirect URI is the
+	// landing callback). Public clients require app-initiated PKCE — the
+	// portal cannot hold the verifier — so they don't qualify.
+	SSOReady      bool   `json:"sso_ready"`
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
+	RedirectURI   string `json:"redirect_uri,omitempty"`
 }
 
 // WorkspaceTokenResp is the response of POST /me/workspaces/{id}/token.

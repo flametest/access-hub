@@ -11,6 +11,7 @@ import (
 	"github.com/flametest/access-hub/internal/domain"
 	casbinx "github.com/flametest/access-hub/internal/infra/casbin"
 	"github.com/flametest/access-hub/internal/infra/model"
+	"github.com/flametest/access-hub/internal/infra/oauth2"
 	"github.com/flametest/access-hub/internal/infra/password"
 	"github.com/flametest/access-hub/internal/infra/repository"
 	"github.com/flametest/access-hub/pkg/dto"
@@ -235,19 +236,54 @@ func (s *meServiceImpl) workspaceItem(ctx context.Context, account *model.Accoun
 			roles = append(roles, dto.RoleSummary{Code: b.RoleCode, Name: b.RoleName})
 		}
 	}
+	// SSO jump target: the app's first active confidential authorization-code
+	// client. Best-effort — a missing/invalid client just means the portal
+	// falls back to the workspace detail page.
+	clientID, redirectURI := s.ssoJump(ctx, app.Id)
 	return &dto.WorkspaceItem{
-		AccountID:   account.Id,
-		AppKey:      app.Key,
-		AppName:     app.Name,
-		AppLogoURL:  deref(app.LogoURL),
-		OrgKey:      orgKey,
-		OrgName:     orgName,
-		Email:       account.Email,
-		DisplayName: deref(account.DisplayName),
-		Status:      account.Status,
-		Roles:       roles,
-		LastLoginAt: account.LastLoginAt,
+		AccountID:     account.Id,
+		AppKey:        app.Key,
+		AppName:       app.Name,
+		AppLogoURL:    deref(app.LogoURL),
+		OrgKey:        orgKey,
+		OrgName:       orgName,
+		Email:         account.Email,
+		DisplayName:   deref(account.DisplayName),
+		Status:        account.Status,
+		Roles:         roles,
+		LastLoginAt:   account.LastLoginAt,
+		SSOReady:      clientID != "",
+		OAuthClientID: clientID,
+		RedirectURI:   redirectURI,
 	}, nil
+}
+
+// ssoJump resolves the app's portal-initiated SSO target: the first ACTIVE
+// CONFIDENTIAL client registered with the authorization_code grant (its first
+// registered redirect URI is the landing callback). Public clients require
+// app-initiated PKCE — the portal cannot hold the verifier — so they never
+// qualify; errors are swallowed (the caller degrades gracefully).
+func (s *meServiceImpl) ssoJump(ctx context.Context, appID string) (clientID, redirectURI string) {
+	clients, err := s.c.OAuthClientRepo().FindByApp(ctx, appID)
+	if err != nil {
+		return "", ""
+	}
+	for _, row := range clients {
+		if row.Status != model.OAuthClientStatusActive ||
+			row.ClientType != model.OAuthClientTypeConfidential {
+			continue
+		}
+		client := oauth2.NewClient(row, "")
+		if !client.HasGrant(model.OAuthGrantAuthorizationCode) {
+			continue
+		}
+		uris := client.RedirectURIs()
+		if len(uris) == 0 {
+			continue
+		}
+		return row.Id, uris[0]
+	}
+	return "", ""
 }
 
 // resolveGrantedApp returns the app key and the subject accounts for

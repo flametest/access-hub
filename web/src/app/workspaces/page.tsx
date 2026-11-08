@@ -18,7 +18,7 @@ import { useToast } from "@/components/toast";
 import { useMe } from "@/hooks/use-me";
 import { useRequireAuth } from "@/hooks/use-require-auth";
 import { api, errMessage } from "@/lib/api";
-import { setAppTokens } from "@/lib/tokens";
+import { jumpToWorkspaceApp } from "@/lib/workspace-jump";
 import type { Workspace } from "@/lib/types";
 
 function roleSummary(ws: Workspace): string {
@@ -42,10 +42,10 @@ export default function WorkspacesPage() {
   async function openWorkspace(ws: Workspace) {
     setMintingId(ws.account_id);
     try {
-      const tokens = await api.mintWorkspaceToken(ws.account_id);
-      // App tokens are stored per account, separate from the portal tokens.
-      setAppTokens(ws.account_id, tokens.access_token, tokens.refresh_token);
-      router.push(`/workspace/${ws.account_id}`);
+      const fallback = await jumpToWorkspaceApp(ws);
+      if (fallback) {
+        router.push(fallback);
+      }
     } catch (err) {
       toast(
         errMessage(err, "Could not open this workspace. Please try again."),
@@ -106,19 +106,30 @@ export default function WorkspacesPage() {
                     {roleSummary(ws)}
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  disabled={ws.status !== "active" || mintingId !== null}
-                  loading={mintingId === ws.account_id}
-                  onClick={() => openWorkspace(ws)}
-                  title={
-                    ws.status !== "active"
-                      ? `This workspace is ${ws.status.replace(/_/g, " ")}`
-                      : undefined
-                  }
-                >
-                  Open
-                </Button>
+                <div className="flex flex-none items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      router.push(`/workspace/${ws.account_id}`)
+                    }
+                  >
+                    Details
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={ws.status !== "active" || mintingId !== null}
+                    loading={mintingId === ws.account_id}
+                    onClick={() => openWorkspace(ws)}
+                    title={
+                      ws.status !== "active"
+                        ? `This workspace is ${ws.status.replace(/_/g, " ")}`
+                        : undefined
+                    }
+                  >
+                    Open
+                  </Button>
+                </div>
               </Card>
             ))}
           </div>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useSyncExternalStore, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/button";
 import { Card } from "@/components/card";
@@ -15,6 +15,7 @@ import { useToast } from "@/components/toast";
 import { useRequireAuth } from "@/hooks/use-require-auth";
 import { api, errMessage } from "@/lib/api";
 import { getAppToken, subscribeToTokenChanges } from "@/lib/tokens";
+import { jumpToWorkspaceApp } from "@/lib/workspace-jump";
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -52,6 +53,22 @@ export default function WorkspaceDetailPage() {
   );
 
   const ws = workspaceQuery.data;
+
+  // Open app (SSO-ready workspaces): the portal mints the authorization code
+  // and the browser leaves for the app's redirect URI. The button is hidden
+  // without sso_ready, so no fallback routing is needed here.
+  const [jumping, setJumping] = useState(false);
+
+  async function openApp() {
+    if (!ws) return;
+    setJumping(true);
+    try {
+      await jumpToWorkspaceApp(ws);
+    } catch (err) {
+      toast(errMessage(err, "Could not open the app. Please try again."), "error");
+      setJumping(false);
+    }
+  }
 
   async function copyToken() {
     if (!appToken) return;
@@ -122,6 +139,16 @@ export default function WorkspaceDetailPage() {
             {[ws.email, ws.roles.join(", ")].filter(Boolean).join(" · ")}
           </p>
         </div>
+        {ws.sso_ready && (
+          <Button
+            size="sm"
+            className="flex-none"
+            loading={jumping}
+            onClick={openApp}
+          >
+            <Icon name="logout" className="size-4" /> Open app
+          </Button>
+        )}
       </div>
 
       {/* Signed-in strip (prototype's "You're in X") */}

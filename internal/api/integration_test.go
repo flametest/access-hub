@@ -259,6 +259,29 @@ func TestFullChain(t *testing.T) {
 	if len(rolesSummary) != 1 || asMap(rolesSummary[0])["code"] != "manager" {
 		t.Fatalf("workspace roles = %v", rolesSummary)
 	}
+	// No OIDC client yet: the portal-initiated SSO jump is not available.
+	if ws["sso_ready"] != false {
+		t.Fatalf("workspace sso_ready = %v (want false without a client)", ws)
+	}
+
+	// Registering a confidential authorization-code client flips the jump on.
+	status, body = doJSON("POST", "/api/v1/admin/apps/crm/oauth-clients", rootToken, map[string]any{
+		"name": "crm-web", "client_type": "confidential",
+		"grant_types":   []string{"authorization_code", "refresh_token"},
+		"redirect_uris": []string{"https://crm.example.com/cb"},
+		"scopes":        []string{"openid", "profile"},
+	})
+	expectCode(status, 201, body)
+	crmClientID := str(asMap(body), "client_id")
+
+	status, body = doJSON("GET", "/api/v1/me/workspaces", aliceToken, nil)
+	expectCode(status, 200, body)
+	ws = asMap(asList(body)[0])
+	if ws["sso_ready"] != true ||
+		ws["oauth_client_id"] != crmClientID ||
+		ws["redirect_uri"] != "https://crm.example.com/cb" {
+		t.Fatalf("workspace sso fields = %v", ws)
+	}
 
 	status, body = doJSON("POST", "/api/v1/me/workspaces/"+aliceAccountID+"/token", aliceToken, nil)
 	expectCode(status, 200, body)

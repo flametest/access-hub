@@ -151,6 +151,10 @@ export function toWorkspace(raw: unknown): Workspace {
   const r = asRecord(raw);
   const app = asRecord(r.app);
   const org = asRecord(r.org);
+  const oauthClientID = str(
+    r.oauth_client_id,
+    r.oauthClientId,
+  );
   return {
     account_id: str(r.account_id, r.accountId, r.id),
     app_key: str(r.app_key, r.appKey, app.key),
@@ -161,6 +165,9 @@ export function toWorkspace(raw: unknown): Workspace {
     org_name: optStr(r.org_name, org.name),
     roles: strList(r.roles, r.role_names, r.roleNames, r.role_summary, r.role),
     status: str(r.status, "unknown").toLowerCase(),
+    sso_ready: r.sso_ready === true && oauthClientID !== "" && str(r.redirect_uri, r.redirectUri) !== "",
+    oauth_client_id: oauthClientID || undefined,
+    redirect_uri: optStr(r.redirect_uri, r.redirectUri),
   };
 }
 

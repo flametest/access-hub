@@ -39,6 +39,13 @@ import type {
 
 const BASE = "/api/v1";
 
+/** randomState generates a 128-bit hex OAuth `state` (CSRF hygiene). */
+function randomState(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /**
  * Friendly copy for the error envelope codes (docs/design.md: verrors —
  * 1400 bad request, 1401 unauthorized, 1403 forbidden, 1404 not found,
@@ -392,6 +399,29 @@ export const api = {
     request<TokenPair>(`/me/workspaces/${encodeURIComponent(accountId)}/token`, {
       method: "POST",
     }),
+
+  /**
+   * Portal-initiated SSO jump: mints an authorization code for the app's
+   * confidential client (AuthorizeSPA) and returns the redirect target
+   * (code+state attached) for the browser to navigate to. The business app
+   * exchanges the code at POST /oauth2/token with its client secret.
+   */
+  authorizeWorkspace: async (
+    accountId: string,
+    clientId: string,
+    redirectUri: string,
+  ): Promise<string> => {
+    const resp = await request<{ redirect_to: string }>("/oauth/authorize", {
+      method: "POST",
+      body: {
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        state: randomState(),
+        account_id: accountId,
+      },
+    });
+    return resp.redirect_to;
+  },
 
   listSignInMethods: async (): Promise<SignInMethod[]> =>
     toSignInMethods(await request<unknown>("/me/signin-methods")),

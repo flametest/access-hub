@@ -110,6 +110,14 @@ export interface Workspace {
   roles: string[];
   /** active | pending_activation | disabled */
   status: string;
+  /**
+   * Portal-initiated SSO jump ("Open" → the app's OIDC code flow). Present
+   * when the app has an active confidential authorization-code client;
+   * without it Open falls back to the workspace detail page.
+   */
+  sso_ready?: boolean;
+  oauth_client_id?: string;
+  redirect_uri?: string;
 }
 
 /** GET /me/signin-methods. */
